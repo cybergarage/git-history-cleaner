@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 — Unreleased
+## 1.0.0 — 2026-10-27
 
 First general-purpose packaged release, under the name `git-history-cleaner`.
 
@@ -20,5 +20,4 @@ First general-purpose packaged release, under the name `git-history-cleaner`.
 ### Breaking changes
 
 The pre-release git-compress command family is replaced by the unified CLI.
-See [migration notes](docs/migration.md). 1.0.0 publication is pending; the version
-in package metadata prepares the distribution and does not imply a PyPI release.
+See [migration notes](docs/migration.md).

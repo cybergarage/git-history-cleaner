@@ -20,14 +20,14 @@ working copy.
 - macOS or Linux. Native Windows is not supported in 1.0.0.
 - Enough free disk space for a full mirror backup and a working clone.
 
-Install the published release with:
+Install from [PyPI](https://pypi.org/project/git-history-cleaner/) with:
 
 ```sh
 pipx install git-history-cleaner==1.0.0
 git-history-cleaner --version
 ```
 
-Until 1.0.0 is published, install this checkout instead:
+To install from a source checkout:
 
 ```sh
 python3 -m venv .venv
