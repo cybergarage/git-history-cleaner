@@ -1,8 +1,8 @@
 # git-history-cleaner
 
-[![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/cybergarage/cybergarage-pub-cleaner/blob/main/pyproject.toml)
-[![CI](https://github.com/cybergarage/cybergarage-pub-cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/cybergarage/cybergarage-pub-cleaner/actions/workflows/ci.yml)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://github.com/cybergarage/cybergarage-pub-cleaner/blob/main/pyproject.toml)
+[![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/cybergarage/git-history-cleaner/blob/main/pyproject.toml)
+[![CI](https://github.com/cybergarage/git-history-cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/cybergarage/git-history-cleaner/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://github.com/cybergarage/git-history-cleaner/blob/main/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Remove obsolete file versions from Git history while preserving the current

@@ -3,8 +3,8 @@
 The distribution name is `git-history-cleaner`, the import name is
 `git_history_cleaner`, and the executable is `git-history-cleaner`.
 The license is MIT. Package metadata and `__version__` must agree on `1.0.0`.
-The existing GitHub repository remains `cybergarage/cybergarage-pub-cleaner`;
-renaming it is optional and must be reflected in metadata and publisher settings.
+The GitHub repository is `cybergarage/git-history-cleaner`.
+Publisher settings must use this repository name.
 
 A PyPI account alone does not configure uploads. Use Trusted Publishing to avoid
 storing a long-lived PyPI token in GitHub. The workflow does not publish on push,
@@ -43,7 +43,7 @@ In PyPI's account publishing settings, add a pending publisher for a new project
 | --- | --- |
 | PyPI project name | `git-history-cleaner` |
 | GitHub owner | `cybergarage` |
-| GitHub repository | `cybergarage-pub-cleaner` |
+| GitHub repository | `git-history-cleaner` |
 | Workflow filename | `release.yml` |
 | Environment name | `pypi` |
 

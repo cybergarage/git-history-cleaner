@@ -23,8 +23,8 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/cybergarage/cybergarage-pub-cleaner"
-Issues = "https://github.com/cybergarage/cybergarage-pub-cleaner/issues"
+Repository = "https://github.com/cybergarage/git-history-cleaner"
+Issues = "https://github.com/cybergarage/git-history-cleaner/issues"
 
 [project.scripts]
 git-history-cleaner = "git_history_cleaner.cli:main"
