@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add strict flat repository-local TOML with explicit CLI precedence.
+- Analyze to stdout; export old plans explicitly with analyze-legacy.
+- Add plan-free isolated clean with completed audit evidence and explicit leased publication.
+- Document the complete publish, existing-clone migration and artifact lifecycle.
+
+
 ## 1.0.0 — 2026-10-27
 
 First general-purpose packaged release, under the name `git-history-cleaner`.
