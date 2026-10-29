@@ -1,6 +1,6 @@
 # git-history-cleaner
 
-[![Version 1.0.0](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/cybergarage/git-history-cleaner/blob/main/pyproject.toml)
+[![Version 1.1.0](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/cybergarage/git-history-cleaner/blob/main/pyproject.toml)
 [![CI](https://github.com/cybergarage/git-history-cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/cybergarage/git-history-cleaner/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://github.com/cybergarage/git-history-cleaner/blob/main/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -12,20 +12,19 @@ branch's complete file tree. Version 1.0.0 generalizes the original
 `analyze` previews targets on stdout. `clean` selects, rewrites an isolated clone
 using [git-filter-repo](https://github.com/newren/git-filter-repo), and verifies it
 in one invocation. It preserves your source working copy and never pushes automatically.
-The new commands below describe this source checkout; the published 1.0.0 release
-uses an older workflow. This checkout removes saved-plan compatibility and the
-old script entry points; see [migration](docs/migration.md).
+Version 1.1.0 removes saved-plan compatibility and the old script entry points;
+see [migration](docs/migration.md) before upgrading from 1.0.0.
 
 ## Requirements and installation
 
 - Python 3.10 or later and Git 2.36 or later on PATH.
-- macOS or Linux. Native Windows is not supported in 1.0.0.
+- macOS or Linux. Native Windows is not supported in 1.1.0.
 - Enough free disk space for an isolated full-history working clone.
 
 Install from [PyPI](https://pypi.org/project/git-history-cleaner/) with:
 
 ```sh
-pipx install git-history-cleaner==1.0.0
+pipx install git-history-cleaner==1.1.0
 git-history-cleaner --version
 ```
 
@@ -354,7 +353,7 @@ its private Git directory and are removed by cleanup.
 - [CLI reference](docs/cli.md)
 - [Safety, limitations and recovery](docs/safety.md)
 - [Breaking migration notes](docs/migration.md)
-- [Building and publishing 1.0.0](docs/releasing.md)
+- [Building and publishing 1.1.0](docs/releasing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
 
