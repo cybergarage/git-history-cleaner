@@ -55,9 +55,7 @@ class ConfigClean(Fixture):
         def no_plan_save(path, value):
             self.assertNotEqual('plan.json', path.name)
             original_save(path, value)
-        with self.cwd(self.repo), mock.patch.object(core, 'save', side_effect=no_plan_save), \
-                mock.patch.object(core, 'legacy_analyze', side_effect=AssertionError('legacy')), \
-                mock.patch.object(core, 'rewrite', side_effect=AssertionError('plan rewrite')):
+        with self.cwd(self.repo), mock.patch.object(core, 'save', side_effect=no_plan_save):
             code, out, err = self.invoke('clean')
         self.assertEqual(0, code, err)
         result = json.loads(out)
@@ -200,15 +198,15 @@ class ConfigClean(Fixture):
             self.assertTrue(Path(result['run']).exists())
             self.assertEqual(result['old_head'], core.text(bare, 'rev-parse', 'main'))
 
-    def test_empty_lists_and_legacy_policy_unchanged_by_configuration(self):
+    def test_empty_lists_and_completed_policy_unchanged_by_configuration(self):
         self.old_asset()
         conf = self.config('path = []\nexclude = []\next = []\njson = false\n')
         code, out, err = self.invoke('analyze', '--config', str(conf))
         self.assertEqual(1, code)
         self.assertIn('specify --path', err)
-        legacy = self.analyze()
+        result = self.clean()
         self.config('path = ["README"]\n')
-        code, out, err = self.invoke('rewrite', '--config', str(conf), '--plan', legacy['plan'])
+        code, out, err = self.invoke('verify', '--config', str(conf), '--run', result['run'])
         self.assertEqual(0, code, err)
         self.assertIn('verified: true', out)
 
@@ -436,3 +434,39 @@ class ConfigClean(Fixture):
             code, out, err = self.invoke('clean', '--repo', str(self.repo), '--ext', 'pdf', '--json')
             self.assertEqual(0, code, err)
             self.assertTrue(json.loads(out)['verified'])
+
+    def test_only_current_commands_and_options_are_accepted(self):
+        import argparse
+        from git_history_cleaner.cli import parser
+        command_parser = parser()
+        commands = next(action for action in command_parser._actions
+                        if isinstance(action, argparse._SubParsersAction)).choices
+        self.assertEqual({'analyze', 'clean', 'verify', 'push', 'rebase', 'cleanup'}, set(commands))
+        for args in (['analyze-legacy'], ['rewrite', '--plan', 'old/plan.json'],
+                     ['analyze', '--work-dir', 'old'], ['clean', '--plan', 'old/plan.json'],
+                     ['cleanup', '--run', 'old', '--include-backup']):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as failure:
+                main(args)
+            self.assertEqual(2, failure.exception.code)
+        self.assertFalse(hasattr(core, 'legacy_analyze'))
+        self.assertFalse(hasattr(core, 'rewrite'))
+        self.assertFalse(hasattr(core, 'load_plan'))
+
+    def test_saved_plan_runs_are_rejected_without_modification(self):
+        import uuid
+        old = self.root / 'old-run'
+        old.mkdir()
+        marker = old / 'run.json'
+        marker.write_text(json.dumps({'format': core.FORMAT, 'root': str(old),
+                                     'run_id': str(uuid.uuid4()), 'state': 'verified',
+                                     'plan_digest': 'old-plan-digest'}))
+        plan = old / 'plan.json'
+        plan.write_text('{"old": "execution plan"}')
+        before = {p.name: p.read_bytes() for p in old.iterdir()}
+        for command in (['verify'], ['push', '--remote', str(self.root / 'remote.git'), '--yes'],
+                        ['rebase', '--repo', str(self.repo)], ['cleanup', '--yes']):
+            with mock.patch.object(core, 'git', side_effect=AssertionError('must not touch a repository')):
+                code, out, err = self.invoke(*command, '--no-config', '--run', str(old))
+            self.assertEqual(1, code)
+            self.assertIn('unsupported saved-plan run', err)
+            self.assertEqual(before, {p.name: p.read_bytes() for p in old.iterdir()})

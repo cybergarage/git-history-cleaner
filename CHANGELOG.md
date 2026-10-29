@@ -3,10 +3,13 @@
 ## Unreleased
 
 - Add strict flat repository-local TOML with explicit CLI precedence.
-- Analyze to stdout; export old plans explicitly with analyze-legacy.
+- Analyze to stdout and remove the saved-plan compatibility workflow.
 - Add plan-free isolated clean with completed audit evidence and explicit leased publication.
 - Document the complete publish, existing-clone migration and artifact lifecycle.
-
+- Breaking: remove analyze-legacy, standalone rewrite, saved-plan consumers,
+  --work-dir/--plan/--include-backup and all git-compress migration-notice scripts.
+  Keep verify, push, rebase and cleanup for current clean audit/result records;
+  old saved-plan runs are rejected before modification.
 
 ## 1.0.0 — 2026-10-27
 

@@ -1,8 +1,0 @@
-#!/usr/bin/env python3
-"""Migration notice for the pre-1.0 interface."""
-import sys
-
-print("This legacy command was replaced by git-history-cleaner 1.0.0. "
-      "Use analyze, rewrite, verify, push, rebase or cleanup. "
-      "See docs/migration.md; no operation was performed.", file=sys.stderr)
-raise SystemExit(2)

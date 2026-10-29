@@ -249,39 +249,6 @@ def apply_selection(root, repo, chosen):
             callback_path.unlink(missing_ok=True)
 
 
-def legacy_analyze(args):
-    source, rules = resolve_selection(args)
-    if args.work_dir:
-        root = Path(args.work_dir).absolute()
-        root.mkdir(parents=True, exist_ok=False)
-        root = root.resolve()
-    else:
-        root = Path(tempfile.mkdtemp(prefix=".git-history-cleaner-", dir=Path.cwd())).resolve()
-    manifest = {"format": FORMAT, "run_id": str(uuid.uuid4()), "root": str(root), "state": "analyzing"}
-    save(root / "run.json", manifest)
-    try:
-        git(root, "clone", "--mirror", "--no-local", "--", source, "backup.git")
-        backup = root / "backup.git"
-        if text(backup, "rev-parse", "--is-shallow-repository") == "true":
-            raise ValueError("shallow history is unsupported; use a full repository")
-        branch = args.branch or text(backup, "symbolic-ref", "--short", "HEAD")
-        git(backup, "check-ref-format", "refs/heads/" + branch)
-        ref = "refs/heads/" + branch
-        old = text(backup, "rev-parse", "--verify", ref + "^{commit}")
-        plan = {"format": FORMAT, "run_id": manifest["run_id"], "source": source,
-                "branch": branch, "old_head": old, "old_tree": text(backup, "rev-parse", old + "^{tree}"),
-                "rules": rules, "selection": selection(backup, old, rules),
-                "snapshot_refs": text(backup, "for-each-ref", "--format=%(refname)").splitlines()}
-        save(root / "plan.json", plan)
-        manifest.update(state="analyzed", plan_digest=digest(plan))
-        save(root / "run.json", manifest)
-        return {"run": str(root), "plan": str(root / "plan.json"), **plan["selection"]}
-    except Exception as exc:
-        manifest.update(state="failed", error=str(exc))
-        save(root / "run.json", manifest)
-        raise
-
-
 def load_run(value):
     requested = Path(value).absolute()
     if requested.is_symlink():
@@ -293,20 +260,17 @@ def load_run(value):
     manifest = json.loads(marker.read_text(encoding="utf-8"))
     if manifest.get("format") != FORMAT or manifest.get("root") != str(root):
         raise ValueError("not a recognized run directory at its recorded location")
+    if manifest.get("workflow") != "clean":
+        raise ValueError("unsupported saved-plan run; create a new result with clean")
     uuid.UUID(manifest["run_id"])
     return root, manifest
 
 
-def load_plan(root, manifest):
-    if manifest.get("workflow") == "clean":
-        audit = json.loads((root / "audit.json").read_text(encoding="utf-8"))
-        if digest(audit) != manifest.get("audit_digest"):
-            raise ValueError("completed audit changed")
-        return audit
-    plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
-    if plan.get("run_id") != manifest["run_id"] or digest(plan) != manifest.get("plan_digest"):
-        raise ValueError("plan changed; use analyze-legacy to create a new plan instead of editing it")
-    return plan
+def load_audit(root, manifest):
+    audit = json.loads((root / "audit.json").read_text(encoding="utf-8"))
+    if digest(audit) != manifest.get("audit_digest"):
+        raise ValueError("completed audit changed")
+    return audit
 
 
 def safe_repo(root, name):
@@ -319,65 +283,36 @@ def safe_repo(root, name):
     return repo
 
 
-def rewrite(plan_path):
-    path = Path(plan_path).resolve()
-    root, manifest = load_run(path.parent)
-    if path.name != "plan.json" or manifest["state"] != "analyzed":
-        raise ValueError("rewrite requires an analyzed run and its plan.json")
-    plan = load_plan(root, manifest)
-    backup = safe_repo(root, "backup.git")
-    ref = "refs/heads/" + plan["branch"]
-    if text(backup, "rev-parse", ref) != plan["old_head"]:
-        raise ValueError("backup branch changed; use analyze-legacy to create a new run")
-    actual = selection(backup, plan["old_head"], plan["rules"])
-    if actual != plan["selection"]:
-        raise ValueError("backup no longer matches the plan")
-    manifest["state"] = "rewriting"
-    save(root / "run.json", manifest)
-    try:
-        repo = safe_repo(root, "rewritten")
-        git(root, "clone", "--no-local", "--no-tags", "--single-branch", "--branch", plan["branch"],
-            str(backup), str(repo))
-        apply_selection(root, repo, plan["selection"])
-        manifest.update(state="rewritten", new_head=text(repo, "rev-parse", "HEAD"))
-        save(root / "run.json", manifest)
-        return verify(root)
-    except Exception as exc:
-        manifest.update(state="failed", error=str(exc))
-        save(root / "run.json", manifest)
-        raise
-
-
 def verify(value):
     root, manifest = load_run(value)
-    if manifest["state"] not in {"rewritten", "verified", "pushed", "push-failed"}:
-        raise ValueError("run has no completed rewrite to verify")
-    plan = load_plan(root, manifest)
+    if manifest["state"] not in {"verified", "pushed", "push-failed"}:
+        raise ValueError("run has no completed clean to verify")
+    audit = load_audit(root, manifest)
     repo = safe_repo(root, "rewritten")
-    check_result(repo, manifest, plan)
+    check_result(repo, manifest, audit)
     if manifest["state"] != "pushed":
         manifest["state"] = "verified"
     save(root / "run.json", manifest)
     result = {"run": str(root), "repository": str(repo), "verified": True, "head_tree_preserved": True,
-              "branch": plan["branch"], "old_head": plan["old_head"], "new_head": manifest["new_head"],
+              "branch": audit["branch"], "old_head": audit["old_head"], "new_head": manifest["new_head"],
               "scope": "selected branch only"}
     save(root / "verification.json", result)
     return result
 
 
-def check_result(repo, manifest, plan):
+def check_result(repo, manifest, audit):
     if text(repo, "rev-parse", "HEAD") != manifest["new_head"]:
         raise ValueError("rewritten HEAD changed")
     if text(repo, "status", "--porcelain"):
         raise ValueError("rewritten working tree is dirty")
-    if text(repo, "rev-parse", "HEAD^{tree}") != plan["old_tree"]:
+    if text(repo, "rev-parse", "HEAD^{tree}") != audit["old_tree"]:
         raise ValueError("verification failed: HEAD tree changed")
     git(repo, "fsck", "--full")
     history = inventory(repo, "HEAD")
     all_ids = set().union(*history.values()) if history else set()
-    if set(plan["selection"]["strip_blobs"]) & all_ids:
+    if set(audit["selection"]["strip_blobs"]) & all_ids:
         raise ValueError("verification failed: selected blobs remain reachable")
-    if set(plan["selection"]["deleted_paths"]) & set(history):
+    if set(audit["selection"]["deleted_paths"]) & set(history):
         raise ValueError("verification failed: deleted paths remain reachable")
 
 
@@ -392,7 +327,7 @@ def confirm(message, yes):
 def push(value, remote, yes=False, chunk_size=0):
     verify(value)
     root, manifest = load_run(value)
-    plan = load_plan(root, manifest)
+    audit = load_audit(root, manifest)
     if manifest.get("temporary_refs"):
         raise ValueError("temporary refs from an earlier push remain; resolve them first")
     repo = safe_repo(root, "rewritten")
@@ -400,10 +335,10 @@ def push(value, remote, yes=False, chunk_size=0):
     destination = str(Path(remote).resolve()) if Path(remote).exists() else remote
     if destination.startswith("-"):
         raise ValueError("remote must not start with '-'")
-    ref = "refs/heads/" + plan["branch"]
+    ref = "refs/heads/" + audit["branch"]
     advertised = text(repo, "ls-remote", "--refs", destination, ref).split()
-    if not advertised or advertised[0] != plan["old_head"]:
-        raise ValueError("destination branch differs from recorded HEAD; run clean against the current source again (or analyze-legacy then rewrite)")
+    if not advertised or advertised[0] != audit["old_head"]:
+        raise ValueError("destination branch differs from recorded HEAD; run clean against the current source again")
     confirm(f"Rewrite {destination} {ref}?", yes)
     pending = []
     uploaded = {}
@@ -422,7 +357,7 @@ def push(value, remote, yes=False, chunk_size=0):
                 manifest["temporary_ref_oids"] = uploaded
                 save(root / "run.json", manifest)
                 git(repo, "push", f"--force-with-lease={temporary}:", destination, f"{oid}:{temporary}")
-        git(repo, "push", f"--force-with-lease={ref}:{plan['old_head']}",
+        git(repo, "push", f"--force-with-lease={ref}:{audit['old_head']}",
             destination, f"{manifest['new_head']}:{ref}")
         manifest["state"] = "pushed"
     except Exception as exc:
@@ -442,17 +377,14 @@ def push(value, remote, yes=False, chunk_size=0):
     return {"pushed": True, "destination": destination, "temporary_refs_remaining": pending}
 
 
-def cleanup(value, yes=False, include_backup=False):
+def cleanup(value, yes=False):
     root, manifest = load_run(value)
-    if manifest.get("workflow") != "clean" and not include_backup:
-        raise ValueError("cleanup deletes the mirror backup; specify --include-backup")
     if manifest.get("temporary_refs"):
         raise ValueError("temporary remote refs remain; resolve them before deleting this run")
-    allowed = {"run.json", "plan.json", "backup.git", "rewritten", "strip-blobs.txt",
+    allowed = {"run.json", "rewritten", "strip-blobs.txt",
                "filename-callback.py", "verification.json", "audit.json"}
     if any(p.name not in allowed or p.is_symlink() for p in root.iterdir()):
         raise ValueError("run contains unexpected files or symlinks; refusing recursive deletion")
-    scope = "run and mirror backup" if (root / "backup.git").exists() else "run and cleaned repository"
-    confirm(f"Delete {scope} at {root}?", yes)
+    confirm(f"Delete run and cleaned repository at {root}?", yes)
     shutil.rmtree(root)
     return {"deleted": str(root)}
