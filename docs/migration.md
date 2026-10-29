@@ -1,32 +1,41 @@
-# Migration from git-compress
+# Breaking migration to the clean workflow
 
-1.0.0 is the first packaged release and deliberately changes the pre-release CLI.
+The saved-plan compatibility workflow has been removed. `analyze-legacy` and
+standalone `rewrite` no longer exist; `--plan`, `--work-dir` and cleanup's
+`--include-backup` are no longer accepted. The old `git-compress`,
+`git-compress-chk`, `git-compress-clean` and `git-compress-rebase` migration-notice
+scripts have also been deleted instead of keeping obsolete command entry points.
 
-| Old command | New workflow |
-| --- | --- |
-| `git-compress REPO DIR` | `clean --repo SOURCE --path DIR` |
-| Automatic push / `--no-push` | No automatic push; use `push --run RUN --remote URL` explicitly |
-| `--target-ext` / `--target-exts` | `analyze --ext` |
-| Default document extensions | Explicit `--preset documents` |
-| `--org cybergarage` | Explicit repository URL or local path |
-| `--confirm` / no-op `--yes` | Push and cleanup confirm by default; `--yes` skips the prompt |
-| `git-compress-chk` | `verify --run RUN` with nonzero exit on failed checks |
-| `git-compress-clean` | `cleanup --run RUN --include-backup` |
-| `git-compress-rebase OLD_BASE` | `rebase --run RUN --repo EXISTING_CLONE` |
+Use the supported commands:
 
-Old script filenames remain as migration notices that exit with status 2 and do
-nothing. They are not installed as package entry points. They do not silently
-translate old invocations into destructive new operations.
+```sh
+# Optional informational stdout preview
+git-history-cleaner analyze --repo . --path assets --ext pdf,png,jpg
+# Independently select, rewrite an isolated clone and verify in one invocation
+git-history-cleaner clean --repo . --path assets --ext pdf,png,jpg
+# Explicit publication of the exact result printed above
+git-history-cleaner push --run /ABSOLUTE/PRINTED/RUN --remote DESTINATION
+```
 
-Existing `git-compress-*` directories have no new-format manifest and are not
-accepted by cleanup, verify or rebase. Keep their backups and reports; manage them
-manually using the old recorded commit IDs. New runs use an explicit directory or
-a `.git-history-cleaner-*` default. Rebase backups are now retained by default.
+Do not pass an analysis report as an execution input. Clean creates no plan and
+never automatically publishes or rewrites the source working copy. It retains a
+verified result at the printed location until explicit cleanup.
 
-## Migrating the saved-plan workflow
+Existing saved-plan runs are intentionally unsupported by the new verify, push,
+rebase and cleanup commands. They are rejected before any repository update or
+deletion; no automatic conversion or removal is attempted. Keep any original
+sources, old run artifacts and unpublished work you still need under your own
+control, and create a new clean result from the intended current source. Existing
+plan-free clean results with their audit records remain supported at their
+recorded locations.
 
-Plain `analyze` now prints only to stdout. To keep explicitly exporting an old-style
-plan, use `analyze-legacy --repo SOURCE --path DIR --work-dir NEW_DIR`, then
-`rewrite --plan NEW_DIR/plan.json`. Existing saved plans/runs remain compatible.
-For new work use `clean` directly; do not pass an analysis report as a plan.
-No config action sections are accepted: use the flat shared schema in the README.
+`verify`, `push`, `rebase` and `cleanup` are maintained for current clean results.
+Verify is optional because clean verifies and push re-verifies. Rebase checks the
+published new tip before replaying local commits and retains a recovery branch;
+cleanup deletes only the recognized result after confirmation. Neither a prior
+analyze nor a chain of maintenance commands is required to finish clean.
+
+Configuration stays flat and declarative, with explicit CLI values taking
+precedence. No action or command sections are accepted. See the
+[complete README workflow](../README.md#complete-workflow) for lease-protected
+publication, fresh-clone migration, controlled rebase and artifact cleanup.

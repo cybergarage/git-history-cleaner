@@ -33,7 +33,7 @@ of distinct trees and path/blob associations. There is no hosted size benchmark.
 
 ## clean
 
-Accepts the same selection options as analyze, without `--plan` or `--work-dir`.
+Accepts the same selection options as analyze. The tool manages its workspace.
 Freezes source commit and normalized selection in memory, rechecks the source,
 clones only the selected branch without tags into a managed `.git-history-cleaner-*`
 workspace under the invocation directory, filters and verifies it. Prints absolute
@@ -42,23 +42,6 @@ No plan is serialized or consumed. The source is unchanged; no push is automatic
 Completed `audit.json` and its digest retain verification/publication evidence,
 not an input for another rewrite. Failed runs retain state/error and partial
 artifacts for diagnosis; retry starts a new run. Filter inputs are removed after use.
-
-## analyze-legacy
-
-Explicit compatibility export for existing `rewrite --plan` users. Accepts the
-analyze options plus optional `--work-dir NEW_DIR`; omission creates a managed
-workspace. Saves a full mirror, immutable plan and manifest. Existing saved plans
-and downstream commands remain supported; plain analyze no longer exports plans.
-
-## rewrite
-
-`rewrite --plan RUN/plan.json` clones the snapshot's selected branch with no tags,
-rewrites it, and automatically verifies it. It never pushes. Editing the plan or
-backup invalidates the run; create another analysis to change selection. A
-failed or completed rewrite cannot be repeated in the same run.
-
-The plan checksum detects accidental edits; manifests are trusted local run
-records, not authenticated data from arbitrary third parties.
 
 ## verify
 
@@ -100,8 +83,12 @@ Use `git rebase --continue` or `git rebase --abort` after a conflict.
 
 ## cleanup
 
-`cleanup --run RUN [--include-backup] [--yes]`
+`cleanup --run RUN [--yes]`
 
-Deletes one recognized run at its recorded absolute location and its cleaned repository/reports. Legacy mirror deletion additionally requires `--include-backup`. It requires a confirmation or `--yes`; an unresolved preload
-prevents deletion. Moving a run requires manual management because the recorded
+Deletes one recognized clean run at its recorded absolute location, including
+the cleaned repository and audit/reports. It requires a confirmation or `--yes`;
+an unresolved preload prevents deletion. Moving a run requires manual management because the recorded
 root no longer matches. No wildcard or prefix-based deletion is performed.
+
+Only current clean runs are accepted by verify, push, rebase and cleanup. Older
+saved-plan records are rejected before modification; see [migration](migration.md).

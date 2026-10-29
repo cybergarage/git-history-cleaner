@@ -69,7 +69,7 @@ def resolve(args):
         if path is not None and (args.config is not None or path.exists() or path.is_symlink()):
             values = read(path)
     applicable = {"json"}
-    if args.command in {"analyze", "clean", "analyze-legacy"}:
+    if args.command in {"analyze", "clean"}:
         applicable |= SELECTION
     elif args.command == "rebase":
         applicable |= {"repo", "branch"}

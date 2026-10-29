@@ -38,9 +38,9 @@ class Fixture(unittest.TestCase):
 
     def analyze(self, **kwargs):
         options = dict(repo=str(self.repo), branch=None, path=["assets"], exclude=[],
-                       ext=["pdf"], preset=None, min_bytes=0, work_dir=str(self.root / "run"))
+                       ext=["pdf"], preset=None, min_bytes=0)
         options.update(kwargs)
-        return core.legacy_analyze(argparse.Namespace(**options))
+        return core.analyze(argparse.Namespace(**options))
 
     def old_asset(self):
         self.write("assets/document.pdf", "obsolete")
@@ -48,16 +48,23 @@ class Fixture(unittest.TestCase):
         self.write("assets/document.pdf", "current")
         self.commit("new")
 
-    def rewrite(self, **kwargs):
-        result = self.analyze(**kwargs)
-        return core.rewrite(result["plan"])
+    def clean(self, **kwargs):
+        options = dict(repo=str(self.repo), branch=None, path=["assets"], exclude=[],
+                       ext=["pdf"], preset=None, min_bytes=0)
+        options.update(kwargs)
+        previous = Path.cwd()
+        os.chdir(self.root)
+        try:
+            return core.clean(argparse.Namespace(**options))
+        finally:
+            os.chdir(previous)
 
 
 class Workflow(Fixture):
     def test_full_workflow_and_short_preload(self):
         self.old_asset()
         before = core.text(self.repo, "rev-parse", "HEAD")
-        result = self.rewrite()
+        result = self.clean()
         self.assertTrue(result["head_tree_preserved"])
         self.assertNotEqual(before, result["new_head"])
         self.assertEqual(before, core.text(self.repo, "rev-parse", "HEAD"))
@@ -77,8 +84,8 @@ class Workflow(Fixture):
         result = self.analyze()
         self.assertEqual([], result["strip_blobs"])
         self.assertEqual(["assets/old.pdf"], result["deleted_paths"])
-        core.rewrite(result["plan"])
-        self.assertEqual("shared", core.text(self.root / "run/rewritten", "show", "HEAD:current.txt"))
+        cleaned = self.clean()
+        self.assertEqual("shared", core.text(cleaned["repository"], "show", "HEAD:current.txt"))
 
     def test_outside_historical_content_is_protected(self):
         self.write("assets/file.pdf", "shared")
@@ -90,7 +97,7 @@ class Workflow(Fixture):
         result = self.analyze()
         self.assertEqual([], result["strip_blobs"])
         self.assertGreater(result["protected_outside_blobs"], 0)
-        core.rewrite(result["plan"])
+        self.clean()
 
     def test_special_filenames(self):
         names = ["assets/日本語.pdf", "assets/white space.pdf", "assets/tab\tname.pdf", "assets/new\nline.pdf",
@@ -103,7 +110,7 @@ class Workflow(Fixture):
         self.commit("remove names")
         result = self.analyze()
         self.assertEqual(set(names), set(result["deleted_paths"]))
-        core.rewrite(result["plan"])
+        self.clean()
 
     def test_excluded_paths_and_size(self):
         self.write("assets/small.pdf", "a")
@@ -115,15 +122,14 @@ class Workflow(Fixture):
         self.commit("delete")
         result = self.analyze(exclude=["assets/keep"], min_bytes=20)
         self.assertEqual(["assets/large.pdf"], result["deleted_paths"])
-        core.rewrite(result["plan"])
+        self.clean(exclude=["assets/keep"], min_bytes=20)
 
     def test_source_branch_default_not_main(self):
         core.git(self.repo, "branch", "-m", "trunk")
         self.old_asset()
         result = self.analyze()
-        plan = json.loads(Path(result["plan"]).read_text())
-        self.assertEqual("trunk", plan["branch"])
-        core.rewrite(result["plan"])
+        self.assertEqual("trunk", result["branch"])
+        self.clean()
 
     def test_other_branches_and_tags_unchanged(self):
         self.old_asset()
@@ -132,7 +138,7 @@ class Workflow(Fixture):
         bare = self.root / "remote.git"
         core.git(self.root, "clone", "--bare", str(self.repo), str(bare))
         original = core.text(bare, "rev-parse", "release")
-        result = self.rewrite()
+        result = self.clean()
         core.push(result["run"], str(bare), True)
         self.assertEqual(original, core.text(bare, "rev-parse", "release"))
         self.assertEqual(original, core.text(bare, "rev-parse", "other"))
@@ -146,21 +152,21 @@ class Workflow(Fixture):
         self.write("main.txt", "main")
         self.commit("main")
         core.git(self.repo, "merge", "--no-ff", "side", "-m", "merge")
-        self.assertTrue(self.rewrite()["verified"])
+        self.assertTrue(self.clean()["verified"])
 
-    def test_changed_plan_refused(self):
+    def test_changed_audit_refused(self):
         self.old_asset()
-        result = self.analyze()
-        path = Path(result["plan"])
-        plan = json.loads(path.read_text())
-        plan["selection"]["deleted_paths"].append("README")
-        path.write_text(json.dumps(plan))
-        with self.assertRaisesRegex(ValueError, "plan changed"):
-            core.rewrite(path)
+        result = self.clean()
+        path = Path(result["run"]) / "audit.json"
+        audit = json.loads(path.read_text())
+        audit["selection"]["deleted_paths"].append("README")
+        path.write_text(json.dumps(audit))
+        with self.assertRaisesRegex(ValueError, "audit changed"):
+            core.verify(result["run"])
 
     def test_changed_destination_refused(self):
         self.old_asset()
-        result = self.rewrite()
+        result = self.clean()
         bare = self.root / "remote.git"
         core.git(self.root, "clone", "--bare", str(self.repo), str(bare))
         core.git(bare, "update-ref", "refs/heads/main", core.text(self.repo, "rev-parse", "HEAD~1"))
@@ -169,37 +175,35 @@ class Workflow(Fixture):
 
     def test_verify_rejects_changed_head(self):
         self.old_asset()
-        result = self.rewrite()
-        repo = self.root / "run/rewritten"
+        result = self.clean()
+        repo = Path(result["repository"])
         core.git(repo, "reset", "--hard", "HEAD~1")
         with self.assertRaisesRegex(ValueError, "HEAD changed"):
             core.verify(result["run"])
 
-    def test_cleanup_requires_backup_flag_and_recognized_run(self):
+    def test_cleanup_requires_recognized_clean_run(self):
         self.old_asset()
-        result = self.analyze()
-        with self.assertRaisesRegex(ValueError, "include-backup"):
-            core.cleanup(result["run"], True)
+        result = self.clean()
         unrelated = self.root / "git-compress-unrelated"
         unrelated.mkdir()
         with self.assertRaises(OSError):
-            core.cleanup(unrelated, True, True)
+            core.cleanup(unrelated, True)
         self.assertTrue(unrelated.exists())
-        core.cleanup(result["run"], True, True)
+        core.cleanup(result["run"], True)
         self.assertFalse(Path(result["run"]).exists())
 
     def test_cleanup_rejects_symlink_and_unexpected_content(self):
-        result = self.analyze()
+        result = self.clean()
         link = self.root / "link"
         link.symlink_to(result["run"])
         with self.assertRaisesRegex(ValueError, "symlink"):
-            core.cleanup(link, True, True)
+            core.cleanup(link, True)
         (Path(result["run"]) / "personal.txt").write_text("keep")
         with self.assertRaisesRegex(ValueError, "unexpected"):
-            core.cleanup(result["run"], True, True)
+            core.cleanup(result["run"], True)
 
     def test_zero_changes_and_single_commit(self):
-        result = self.rewrite()
+        result = self.clean()
         self.assertEqual(result["old_head"], result["new_head"])
         bare = self.root / "remote.git"
         core.git(self.root, "clone", "--bare", str(self.repo), str(bare))
@@ -219,7 +223,7 @@ class Workflow(Fixture):
         (clones[1] / "local.txt").write_text("local")
         core.git(clones[1], "add", ".")
         core.git(clones[1], "commit", "-qm", "local")
-        result = self.rewrite()
+        result = self.clean()
         core.push(result["run"], str(bare), True)
         for clone in clones:
             with contextlib.redirect_stdout(io.StringIO()):
@@ -230,7 +234,7 @@ class Workflow(Fixture):
 
     def test_remote_advance_during_push_is_rejected_by_lease(self):
         self.old_asset()
-        result = self.rewrite()
+        result = self.clean()
         bare = self.root / "remote.git"
         core.git(self.root, "clone", "--bare", str(self.repo), str(bare))
         self.write("new.txt", "concurrent")
@@ -248,25 +252,9 @@ class Workflow(Fixture):
         manifest = json.loads((Path(result["run"]) / "run.json").read_text())
         self.assertEqual("push-failed", manifest["state"])
 
-    def test_failed_rewrite_retains_backup(self):
-        self.old_asset()
-        result = self.analyze()
-        original_git = core.git
-        def failing_git(repo, *args, **kwargs):
-            if args[0] == "filter-repo":
-                raise RuntimeError("simulated filter failure")
-            return original_git(repo, *args, **kwargs)
-        with mock.patch.object(core, "git", side_effect=failing_git):
-            with self.assertRaisesRegex(RuntimeError, "simulated"):
-                core.rewrite(result["plan"])
-        root = Path(result["run"])
-        self.assertEqual("failed", json.loads((root / "run.json").read_text())["state"])
-        self.assertEqual(core.text(self.repo, "rev-parse", "HEAD"),
-                         core.text(root / "backup.git", "rev-parse", "main"))
-
     def test_failed_preload_cleanup_retains_record(self):
         self.old_asset()
-        result = self.rewrite()
+        result = self.clean()
         bare = self.root / "remote.git"
         core.git(self.root, "clone", "--bare", str(self.repo), str(bare))
         original_git = core.git
@@ -278,11 +266,11 @@ class Workflow(Fixture):
             pushed = core.push(result["run"], str(bare), True, 100)
         self.assertTrue(pushed["temporary_refs_remaining"])
         with self.assertRaisesRegex(ValueError, "temporary"):
-            core.cleanup(result["run"], True, True)
+            core.cleanup(result["run"], True)
 
     def test_preload_cleanup_does_not_delete_concurrent_change(self):
         self.old_asset()
-        result = self.rewrite()
+        result = self.clean()
         bare = self.root / "remote.git"
         core.git(self.root, "clone", "--bare", str(self.repo), str(bare))
         old = core.text(self.repo, "rev-parse", "HEAD")
@@ -299,7 +287,7 @@ class Workflow(Fixture):
 
     def test_noninteractive_push_does_not_write(self):
         self.old_asset()
-        result = self.rewrite()
+        result = self.clean()
         bare = self.root / "remote.git"
         core.git(self.root, "clone", "--bare", str(self.repo), str(bare))
         with mock.patch("sys.stdin.isatty", return_value=False):
@@ -323,7 +311,7 @@ class Workflow(Fixture):
         (self.repo / "script").chmod(0o755)
         (self.repo / "link").symlink_to("assets/after.pdf")
         self.commit("rename and modes")
-        self.assertTrue(self.rewrite()["head_tree_preserved"])
+        self.assertTrue(self.clean()["head_tree_preserved"])
 
     def test_json_failure(self):
         output = io.StringIO()
@@ -338,9 +326,9 @@ class Workflow(Fixture):
         (self.repo / "assets/document.pdf").unlink()
         self.commit("empty current tree")
         count = core.text(self.repo, "rev-list", "--count", "HEAD")
-        result = self.rewrite(path=["."], ext=[])
+        result = self.clean(path=["."], ext=[])
         self.assertTrue(result["verified"])
-        self.assertEqual(count, core.text(self.root / "run/rewritten", "rev-list", "--count", "HEAD"))
+        self.assertEqual(count, core.text(result["repository"], "rev-list", "--count", "HEAD"))
 
     def test_invalid_paths(self):
         for path in ("../outside", "/absolute", ".git/config", "a/../b"):

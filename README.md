@@ -13,13 +13,14 @@ branch's complete file tree. Version 1.0.0 generalizes the original
 using [git-filter-repo](https://github.com/newren/git-filter-repo), and verifies it
 in one invocation. It preserves your source working copy and never pushes automatically.
 The new commands below describe this source checkout; the published 1.0.0 release
-uses the legacy plan workflow.
+uses an older workflow. This checkout removes saved-plan compatibility and the
+old script entry points; see [migration](docs/migration.md).
 
 ## Requirements and installation
 
 - Python 3.10 or later and Git 2.36 or later on PATH.
 - macOS or Linux. Native Windows is not supported in 1.0.0.
-- Enough free disk space for an isolated full-history working clone (plus a mirror for legacy runs).
+- Enough free disk space for an isolated full-history working clone.
 
 Install from [PyPI](https://pypi.org/project/git-history-cleaner/) with:
 
@@ -163,17 +164,18 @@ Configuration never authorizes a push or deletion.
 | --- | --- |
 | `analyze [selection options]` | Informational stdout preview, no saved plan |
 | `clean [selection options]` | Select, isolated rewrite and verification in one invocation |
-| `analyze-legacy [selection options] [--work-dir NEW_DIR]` | Explicit legacy snapshot/plan export |
-| `rewrite --plan /absolute/run/plan.json` | Rewrite an existing legacy analyzed run |
-| `verify --run /absolute/run` | Recheck a completed clean or legacy run |
+| `verify --run /absolute/run` | Recheck a completed clean run |
 | `push --run /absolute/run --remote URL [--yes] [--push-chunk-size N]` | Publish one verified branch with a lease |
 | `rebase --run /absolute/run --repo EXISTING_CLONE [--remote origin] [--branch NAME]` | Migrate local commits after a tool-recorded push; creates a backup branch |
-| `cleanup --run /absolute/run [--include-backup] [--yes]` | Explicitly delete one recognized run; legacy mirror requires --include-backup |
+| `cleanup --run /absolute/run [--yes]` | Explicitly delete one recognized clean run and its result |
 
 All commands support `--help`, `--config PATH` / `--no-config`, and `--json` /
 `--no-json`. `--version` is a top-level option. Shared selection applies to
-analyze/clean/analyze-legacy, repo/branch also to rebase, formatting to all commands.
-Other execution controls stay on the CLI. See [CLI reference](docs/cli.md).
+analyze/clean, repo/branch also to rebase, formatting to all commands.
+Other execution controls stay on the CLI. Verify, rebase and cleanup operate on
+current clean results: they are optional maintenance commands, not stages needed
+to finish clean. Clean already verifies, and push re-verifies before publishing.
+See [CLI reference](docs/cli.md).
 
 ## Selection examples
 
@@ -258,14 +260,12 @@ after checking the migrated work. Do not merge it back into the cleaned branch.
 
 Keep the run until publishing and migration are complete. A clean run holds the
 cleaned repository and completed verification/audit metadata, without a mirror
-backup or plan. Its source clone remains unchanged. Legacy runs also retain a
-mirror and plan. Never place personal files in a run directory.
+backup or plan. Its source clone remains unchanged. Never place personal files
+in a run directory. Saved-plan runs from older versions are not accepted.
 
 ```sh
 # Deletes the exact clean result, with confirmation
 git-history-cleaner cleanup --run /work/project-cleaning/.git-history-cleaner-ab123
-# Legacy runs include a mirror, whose deletion must be explicitly selected
-git-history-cleaner cleanup --run /absolute/legacy-run --include-backup
 ```
 
 Cleanup refuses unexpected files, symlinks and unresolved temporary remote refs.
@@ -279,7 +279,7 @@ clean does not create a separate backup of your work.
 
 - [CLI reference](docs/cli.md)
 - [Safety, limitations and recovery](docs/safety.md)
-- [Migration from git-compress](docs/migration.md)
+- [Breaking migration notes](docs/migration.md)
 - [Building and publishing 1.0.0](docs/releasing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
