@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 — 2026-10-29
 
 - Make push --remote optional: CLI > flat TOML remote > original source policy.
   Capture branch pushRemote/pushDefault/remote and pushurl/url at clean time,
