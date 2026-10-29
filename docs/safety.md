@@ -25,7 +25,11 @@ rewrite with collaborators and branch-protection administrators before pushing.
 
 ## Clean run records
 
-A clean run contains `run.json`, `rewritten/`, completed `audit.json` and
+An operation marker reserves a result in its invocation scope. It contains only
+ownership/schema/identity/location metadata. It is not a plan. Directory locks
+exclude concurrent tool operations; a reserved or uncertain marker blocks clean.
+
+A clean result contains `run.json`, `rewritten/`, completed `audit.json` and
 `verification.json`. It contains no plan or mirror; keep your source clone yourself
 if rollback is needed. Audit integrity is checked before later verify/push calls.
 The audit is written only after successful in-memory verification and cannot be
@@ -42,7 +46,9 @@ embedding access tokens in URLs.
 The source is unchanged. Keep the failed run for diagnosis and inspect the error
 in `run.json` where available. Retry with a new clean invocation. Standalone
 analyze retains no run artifacts. Failed clean artifacts can be explicitly
-removed with cleanup after inspection; no old saved-plan run is accepted.
+removed with scope-wide cleanup after inspection when ownership is proven;
+corrupt or uncertain metadata is never automatically removed. No old saved-plan
+or markerless result is adopted.
 
 ## Push failure or interruption
 
@@ -80,3 +86,22 @@ For conflicts, inspect the working tree and use `git rebase --continue` or
 `git rebase --abort`. The retained backup keeps old objects reachable until you
 explicitly remove it after checking the migrated work. Avoid merging old history
 back into the rewritten branch, which can reintroduce removed objects.
+
+## Cleanup ownership and user work
+
+Discovery is limited to the invocation's private Git directory (working tree) or
+current directory (outside Git), never a search for the latest run. The UUID marker
+and result manifest must agree on schema, identity, owner and exact direct-child
+paths. A filename prefix alone conveys no deletion authority. Symlink/nonregular
+metadata, traversal, mismatched ownership and unknown files cause refusal. Optional
+expert --run chooses a recorded scope; it cannot bypass uniqueness checks.
+
+Cleanup validates all candidates before asking, prints paths/count, and revalidates
+after confirmation before deletion. Cancellation or failed validation deletes
+nothing. It preserves sources and recovery branches in other clones. Local,
+untracked/ignored work, extra refs and changed Git metadata/reflog/object-store
+inventory in a result cause refusal, protecting work even after commit/reset.
+Object inventory uses file identity/size/change times instead of rereading entire
+packs; arbitrary hostile concurrent filesystem writes are outside the local
+trusted-user model. All cooperating tool operations share the scope lock. A crash
+mid-deletion can leave partial artifacts; inspect uncertain remaining data manually.

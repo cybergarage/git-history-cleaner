@@ -35,17 +35,19 @@ of distinct trees and path/blob associations. There is no hosted size benchmark.
 
 Accepts the same selection options as analyze. The tool manages its workspace.
 Freezes source commit and normalized selection in memory, rechecks the source,
-clones only the selected branch without tags into a managed `.git-history-cleaner-*`
-workspace under the invocation directory, filters and verifies it. Prints absolute
-`run` and `repository` paths, `old_head`, `new_head`, and verification status.
+clones only the selected branch without tags into a managed `.git-history-cleaner-result-<UUID>`
+workspace in the invocation scope (private Git directory or current directory), filters and verifies it. Prints absolute
+`marker`, `run` and `repository` paths, branch, old/new commit IDs and verification status.
+A marker reserves the operation; clean refuses existing markers or leftovers.
 No plan is serialized or consumed. The source is unchanged; no push is automatic.
 Completed `audit.json` and its digest retain verification/publication evidence,
 not an input for another rewrite. Failed runs retain state/error and partial
-artifacts for diagnosis; retry starts a new run. Filter inputs are removed after use.
+artifacts for diagnosis; inspect and cleanup the existing operation before retry.
+Filter inputs are removed after use.
 
 ## verify
 
-`verify --run RUN` checks the recorded rewritten HEAD, a clean worktree, complete
+`verify` checks the recorded rewritten HEAD, a clean worktree, complete
 HEAD tree equality, unreachable stripped blobs and absent removed paths within
 the selected branch, and Git object integrity. Results are saved to
 `verification.json`. This does not verify host-side object garbage collection,
@@ -53,7 +55,7 @@ unselected refs, or that removed data is absent from every other clone.
 
 ## push
 
-`push --run RUN --remote DESTINATION [--yes] [--push-chunk-size N]`
+`push --remote DESTINATION [--yes] [--push-chunk-size N]`
 
 DESTINATION is a clone URL or local bare repository path, not a remote nickname.
 It is deliberately mandatory, even when the analysis source was remote. This
@@ -72,7 +74,7 @@ Non-interactive push requires `--yes`. For machine use, combine `--yes --json`.
 
 ## rebase
 
-`rebase --run RUN [--repo PATH] [--remote origin] [--branch NAME]`
+`rebase [--repo PATH] [--remote origin] [--branch NAME]`
 
 Replays local work after the old tip onto the verified new tip; the run must have
 been pushed. The local branch uses explicit CLI/config branch, otherwise the recorded branch. It must contain
@@ -83,12 +85,33 @@ Use `git rebase --continue` or `git rebase --abort` after a conflict.
 
 ## cleanup
 
-`cleanup --run RUN [--yes]`
+`cleanup [--yes]`
 
-Deletes one recognized clean run at its recorded absolute location, including
-the cleaned repository and audit/reports. It requires a confirmation or `--yes`;
-an unresolved preload prevents deletion. Moving a run requires manual management because the recorded
-root no longer matches. No wildcard or prefix-based deletion is performed.
+Preflights all operation markers/results in the invocation scope, prints a summary,
+requires confirmation (or explicit `--yes`), rechecks records and deletes only
+proven owned artifacts. Cancellation deletes nothing. Active operations, pending
+remote temporary refs, unknown/foreign/corrupt data, symlinks, unexpected content,
+changed result metadata, local/ignored work and recovery refs/objects cause refusal.
+The source and external recovery branches are never deleted. Valid interrupted
+reservations or orphaned owned results can be cleaned; uncertain initialization
+needs manual inspection. Nothing is deleted merely for matching a prefix.
 
-Only current clean runs are accepted by verify, push, rebase and cleanup. Older
-saved-plan records are rejected before modification; see [migration](migration.md).
+## Discovery and expert selection
+
+Inside a working tree, discover in that worktree's private Git directory; outside,
+use the current directory. No global/ancestor marker search and no latest-run guess.
+`--repo` changes a source/target, not discovery. Keep following commands in the
+same scope. Nested directories and linked worktrees follow Git-directory identity.
+
+Verify, push and rebase need exactly one valid complete operation; zero, multiple,
+foreign or incomplete operations fail. Cleanup considers all candidates. Marker
+`.git-history-cleaner-operation-<UUID>.json` records ownership/schema/location;
+sibling `.git-history-cleaner-result-<UUID>` holds the result, never a plan.
+Directory locking excludes simultaneous tool operations and marker reservation is
+exclusive. Interrupted/corrupted reservations block another clean.
+
+These four commands accept optional expert `--run /absolute/result`, which anchors
+scope selection to that recognized result. It cannot bypass multiple-operation
+ambiguity. Cleanup still considers all operations in the anchored scope. Old
+markerless/saved-plan runs are not automatically adopted or accepted by this
+selector. See [migration](migration.md).

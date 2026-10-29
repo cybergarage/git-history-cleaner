@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import __version__, core, config
+from . import __version__, core, config, operations
 
 
 def nonnegative(value):
@@ -29,17 +29,17 @@ def parser():
         command.add_argument("--preset", choices=["documents"], default=argparse.SUPPRESS)
         command.add_argument("--min-bytes", type=nonnegative, default=argparse.SUPPRESS)
     verify = sub.add_parser("verify", help="verify tree preservation, removals and Git integrity")
-    verify.add_argument("--run", required=True)
+    verify.add_argument("--run", help="optional expert scope anchor; never bypasses ambiguity")
     push = sub.add_parser("push", help="explicitly publish a verified rewrite using a lease")
-    push.add_argument("--run", required=True)
+    push.add_argument("--run", help="optional expert scope anchor; never bypasses ambiguity")
     push.add_argument("--remote", required=True, help="destination URL or local bare repository path")
     push.add_argument("--yes", action="store_true")
     push.add_argument("--push-chunk-size", type=nonnegative, default=0)
-    cleanup = sub.add_parser("cleanup", help="delete one recognized clean run and its result")
-    cleanup.add_argument("--run", required=True)
+    cleanup = sub.add_parser("cleanup", help="confirm cleanup of all proven operation artifacts in this scope")
+    cleanup.add_argument("--run", help="optional expert scope anchor; never bypasses ambiguity")
     cleanup.add_argument("--yes", action="store_true")
     rebase = sub.add_parser("rebase", help="replay local commits onto a rewritten branch; preserve a backup")
-    rebase.add_argument("--run", required=True)
+    rebase.add_argument("--run", help="optional expert scope anchor; never bypasses ambiguity")
     rebase.add_argument("--repo", default=argparse.SUPPRESS)
     rebase.add_argument("--remote", default="origin", help="remote name in the existing clone")
     rebase.add_argument("--branch", default=argparse.SUPPRESS, help="local branch (default: branch recorded in audit)")
@@ -90,14 +90,17 @@ def main(argv=None):
             result = core.clean(args)
         elif args.command == "analyze":
             result = core.analyze(args)
-        elif args.command == "verify":
-            result = core.verify(args.run)
-        elif args.command == "push":
-            result = core.push(args.run, args.remote, args.yes, args.push_chunk_size)
         elif args.command == "cleanup":
             result = core.cleanup(args.run, args.yes)
         else:
-            result = rebase_run(args)
+            with operations.operation(args.run) as root:
+                if args.command == "verify":
+                    result = core.verify(root)
+                elif args.command == "push":
+                    result = core.push(root, args.remote, args.yes, args.push_chunk_size)
+                else:
+                    args.run = str(root)
+                    result = rebase_run(args)
         if args.json:
             print(json.dumps(result, ensure_ascii=True))
         else:

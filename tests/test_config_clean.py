@@ -319,6 +319,8 @@ class ConfigClean(Fixture):
             self.assertIn('source HEAD changed', err)
             self.assertEqual(original, core.text(self.repo, 'rev-parse', 'HEAD'))
             self.assertEqual(original, core.text(self.repo, 'rev-parse', 'main'))
+            with self.cwd(self.root):
+                self.assertEqual(0, self.invoke('cleanup', '--no-config', '--yes')[0])
 
     def test_clean_zero_targets_and_filter_failure_preserve_original(self):
         self.old_asset()
@@ -331,17 +333,18 @@ class ConfigClean(Fixture):
             self.assertEqual(original, result['new_head'])
             self.assertEqual('main', result['branch'])
             self.assertEqual(original, core.text(self.repo, 'rev-parse', 'HEAD'))
+            self.assertEqual(0, self.invoke('cleanup', '--no-config', '--yes')[0])
             real_git = core.git
             def failing(repo, *args, **kwargs):
                 if args[0] == 'filter-repo':
                     raise RuntimeError('synthetic filtering failure')
                 return real_git(repo, *args, **kwargs)
-            before = set(self.root.glob('.git-history-cleaner-*'))
+            before = set(self.root.glob('.git-history-cleaner-result-*'))
             with mock.patch.object(core, 'git', side_effect=failing):
                 code, out, err = self.invoke('clean', '--no-config', '--repo', str(self.repo), '--ext', 'pdf')
             self.assertEqual(1, code)
             self.assertIn('synthetic filtering failure', err)
-            failed = (set(self.root.glob('.git-history-cleaner-*')) - before).pop()
+            failed = (set(self.root.glob('.git-history-cleaner-result-*')) - before).pop()
             self.assertEqual('failed', json.loads((failed / 'run.json').read_text())['state'])
             self.assertFalse((failed / 'audit.json').exists())
             self.assertFalse((failed / 'plan.json').exists())
@@ -393,19 +396,19 @@ class ConfigClean(Fixture):
         self.assertTrue(result['verified'])
         self.assertEqual('main', result['branch'])
         self.assertEqual(original, core.text(self.repo, 'rev-parse', 'HEAD'))
-        self.assertIn('verified: true', cli('verify', '--no-config', '--run', result['run']))
-        # The shortest documented publication command: explicit result + destination.
-        self.assertIn('pushed: true', cli('push', '--no-config', '--run', result['run'], '--remote', str(remote), '--yes'))
+        self.assertIn('verified: true', cli('verify', '--no-config'))
+        # The shortest documented publication command discovers the unique result.
+        self.assertIn('pushed: true', cli('push', '--no-config', '--remote', str(remote), '--yes'))
         self.assertEqual(result['new_head'], core.text(remote, 'rev-parse', 'main'))
         self.assertEqual(original, core.text(remote, 'rev-parse', 'other'))
         self.assertEqual(original, core.text(remote, 'rev-parse', 'release'))
-        self.assertIn('rebased:', cli('rebase', '--no-config', '--repo', str(existing), '--run', result['run'], '--remote', 'origin'))
+        self.assertIn('rebased:', cli('rebase', '--no-config', '--repo', str(existing), '--remote', 'origin'))
         self.assertEqual('unpublished work', (existing / 'local.txt').read_text())
         self.assertEqual(result['new_head'], core.text(existing, 'rev-parse', 'HEAD~1'))
         fresh = self.root / 'project-fresh'
         core.git(self.root, 'clone', str(remote), str(fresh))
         self.assertEqual(result['new_head'], core.text(fresh, 'rev-parse', 'HEAD'))
-        self.assertIn('deleted:', cli('cleanup', '--no-config', '--run', result['run'], '--yes'))
+        self.assertIn('deleted:', cli('cleanup', '--no-config', '--yes'))
 
     def test_remote_default_head_switch_is_refused(self):
         self.old_asset()

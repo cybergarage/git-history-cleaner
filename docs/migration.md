@@ -13,8 +13,8 @@ Use the supported commands:
 git-history-cleaner analyze --repo . --path assets --ext pdf,png,jpg
 # Independently select, rewrite an isolated clone and verify in one invocation
 git-history-cleaner clean --repo . --path assets --ext pdf,png,jpg
-# Explicit publication of the exact result printed above
-git-history-cleaner push --run /ABSOLUTE/PRINTED/RUN --remote DESTINATION
+# Explicit publication of the unique operation in this scope
+git-history-cleaner push --remote DESTINATION
 ```
 
 Do not pass an analysis report as an execution input. Clean creates no plan and
@@ -25,17 +25,28 @@ Existing saved-plan runs are intentionally unsupported by the new verify, push,
 rebase and cleanup commands. They are rejected before any repository update or
 deletion; no automatic conversion or removal is attempted. Keep any original
 sources, old run artifacts and unpublished work you still need under your own
-control, and create a new clean result from the intended current source. Existing
-plan-free clean results with their audit records remain supported at their
-recorded locations.
+control, and create a new clean result from the intended current source. Results from before marker ownership was introduced are not automatically
+adopted or deleted, even with an expert --run selector. Inspect/manage those
+artifacts yourself and create a new marked operation from the intended source.
 
 `verify`, `push`, `rebase` and `cleanup` are maintained for current clean results.
 Verify is optional because clean verifies and push re-verifies. Rebase checks the
 published new tip before replaying local commits and retains a recovery branch;
-cleanup deletes only the recognized result after confirmation. Neither a prior
+cleanup deletes all proven operations in the invocation scope after confirmation. Neither a prior
 analyze nor a chain of maintenance commands is required to finish clean.
 
 Configuration stays flat and declarative, with explicit CLI values taking
 precedence. No action or command sections are accepted. See the
 [complete README workflow](../README.md#complete-workflow) for lease-protected
 publication, fresh-clone migration, controlled rebase and artifact cleanup.
+
+## Run-free operations
+
+Normal verify, push, rebase and cleanup no longer require `--run`. Remain in the
+same invocation scope: the private Git directory inside a working tree, otherwise
+the current directory. A source/target `--repo` does not change this scope.
+Clean refuses existing operation markers or leftover results. Verify/push/rebase
+require exactly one valid operation; cleanup validates and confirms removal of
+all proven operations. Nothing selects a newest run. Optional expert `--run`
+anchors a recognized result's scope and never bypasses ambiguity; cleanup remains
+scope-wide. See [marker discovery/recovery](../README.md#operation-markers-and-recovery).
