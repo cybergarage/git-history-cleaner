@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Make push --remote optional: CLI > flat TOML remote > original source policy.
+  Capture branch pushRemote/pushDefault/remote and pushurl/url at clean time,
+  refuse ambiguity/self-targets, and preserve the exact branch/lease scope.
+- Reread saved config context for push; default rebase to the published destination.
+
 - Add strict flat repository-local TOML with explicit CLI precedence.
 - Analyze to stdout and remove the saved-plan compatibility workflow.
 - Add plan-free isolated clean with completed audit evidence and explicit leased publication.
@@ -10,6 +15,11 @@
   --work-dir/--plan/--include-backup and all git-compress migration-notice scripts.
   Keep verify, push, rebase and cleanup for current clean audit/result records;
   old saved-plan runs are rejected before modification.
+- Add run-free marker discovery: exclusive clean reservation, unique-result
+  verification/publication/migration, and confirmed scope-wide cleanup.
+- Keep --run as an optional expert scope anchor without ambiguity bypass; refuse
+  old markerless results and unsafe/foreign/corrupt operation artifacts.
+- Preserve added work, backups and reflog/object recovery data during cleanup.
 
 ## 1.0.0 — 2026-10-27
 

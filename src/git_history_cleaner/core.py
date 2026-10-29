@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,9 +36,16 @@ def text(repo, *args):
 
 
 def save(path, value):
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
-    temporary.replace(path)
+    fd, name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(value, indent=2, ensure_ascii=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def digest(value):
@@ -146,7 +152,8 @@ def inspect_source(repo, source, branch, rules):
     branch = branch or text(repo, "symbolic-ref", "--short", "HEAD")
     git(repo, "check-ref-format", "refs/heads/" + branch)
     old = text(repo, "rev-parse", "--verify", "refs/heads/" + branch + "^{commit}")
-    return {"source": source, "branch": branch, "old_head": old,
+    from . import destinations
+    return {"source": source, "source_push": destinations.original(source, branch), "branch": branch, "old_head": old,
             "old_tree": text(repo, "rev-parse", old + "^{tree}"),
             "rules": rules, "selection": selection(repo, old, rules)}
 
@@ -171,6 +178,16 @@ def analyze(args):
 
 
 def clean(args):
+    from . import operations
+    # Reject bad selection before creating a marker or result.
+    resolve_selection(args)
+    directory = operations.scope()
+    with operations.locked(directory):
+        operations.assert_empty(directory)
+        return _clean(args, directory)
+
+
+def _clean(args, directory):
     """Freeze policy in memory; retain only completed verification/audit evidence."""
     source, rules = resolve_selection(args)
     # Validate source and freeze its tip before allocating a persistent workspace.
@@ -181,14 +198,23 @@ def clean(args):
         with tempfile.TemporaryDirectory(prefix="history-cleaner-inspect-") as temporary:
             clone_inspection(temporary, source, args.branch)
             policy = inspect_source(Path(temporary) / "source.git", source, args.branch, rules)
-    root = Path(tempfile.mkdtemp(prefix=".git-history-cleaner-", dir=Path.cwd())).resolve()
-    manifest = {"format": FORMAT, "run_id": str(uuid.uuid4()), "root": str(root),
-                "state": "rewriting", "workflow": "clean"}
+    from . import operations
+    identifier = str(uuid.uuid4())
+    root = directory / (operations.RESULT_PREFIX + identifier)
+    manifest = {"format": FORMAT, "run_id": identifier, "root": str(root),
+                "state": "rewriting", "workflow": "clean", "owner_uid": os.getuid(),
+                "source": source, "old_head": policy["old_head"], "branch": policy["branch"],
+                "operation_scope": str(directory), "operation_marker": operations.PREFIX + identifier + ".json",
+                "configuration": getattr(args, "_configuration", {"path": None, "loaded": False})}
+    operations.create(directory, manifest)
+    root.mkdir(mode=0o700)
     save(root / "run.json", manifest)
     try:
         repo = safe_repo(root, "rewritten")
         git(root, "clone", "--no-local", "--no-tags", "--single-branch", "--branch", policy["branch"],
             "--", source, str(repo))
+        manifest["repo_metadata"] = operations.metadata_fingerprint(repo)
+        save(root / "run.json", manifest)
         if text(repo, "rev-parse", "HEAD") != policy["old_head"]:
             raise ValueError("source branch changed during clean; retry")
         if selection(repo, policy["old_head"], rules) != policy["selection"]:
@@ -196,6 +222,7 @@ def clean(args):
         check_source(root, policy, args.branch is None)
         apply_selection(root, repo, policy["selection"])
         manifest["new_head"] = text(repo, "rev-parse", "HEAD")
+        manifest["repo_metadata"] = operations.metadata_fingerprint(repo)
         check_result(repo, manifest, policy)
         # This is completed-run evidence, never an input to a rewrite.
         save(root / "audit.json", policy)
@@ -257,17 +284,20 @@ def load_run(value):
     marker = root / "run.json"
     if marker.is_symlink():
         raise ValueError("run manifest must not be a symlink")
-    manifest = json.loads(marker.read_text(encoding="utf-8"))
+    from . import operations
+    manifest = operations.owned_file(marker)
     if manifest.get("format") != FORMAT or manifest.get("root") != str(root):
         raise ValueError("not a recognized run directory at its recorded location")
     if manifest.get("workflow") != "clean":
         raise ValueError("unsupported saved-plan run; create a new result with clean")
-    uuid.UUID(manifest["run_id"])
+    if type(manifest.get("run_id")) is not str or str(uuid.UUID(manifest["run_id"])) != manifest["run_id"]:
+        raise ValueError("invalid run identity")
     return root, manifest
 
 
 def load_audit(root, manifest):
-    audit = json.loads((root / "audit.json").read_text(encoding="utf-8"))
+    from . import operations
+    audit = operations.owned_file(root / "audit.json")
     if digest(audit) != manifest.get("audit_digest"):
         raise ValueError("completed audit changed")
     return audit
@@ -293,7 +323,8 @@ def verify(value):
     if manifest["state"] != "pushed":
         manifest["state"] = "verified"
     save(root / "run.json", manifest)
-    result = {"run": str(root), "repository": str(repo), "verified": True, "head_tree_preserved": True,
+    result = {"run": str(root), "marker": str(root.parent / manifest["operation_marker"]),
+              "repository": str(repo), "verified": True, "head_tree_preserved": True,
               "branch": audit["branch"], "old_head": audit["old_head"], "new_head": manifest["new_head"],
               "scope": "selected branch only"}
     save(root / "verification.json", result)
@@ -324,22 +355,21 @@ def confirm(message, yes):
         raise ValueError("not confirmed; use --yes for non-interactive operation")
 
 
-def push(value, remote, yes=False, chunk_size=0):
-    verify(value)
+def push(value, remote=None, yes=False, chunk_size=0, destination_origin=None):
     root, manifest = load_run(value)
     audit = load_audit(root, manifest)
     if manifest.get("temporary_refs"):
         raise ValueError("temporary refs from an earlier push remain; resolve them first")
     repo = safe_repo(root, "rewritten")
-    # Resolve before git -C changes the meaning of a relative local destination.
-    destination = str(Path(remote).resolve()) if Path(remote).exists() else remote
-    if destination.startswith("-"):
-        raise ValueError("remote must not start with '-'")
+    from . import destinations
+    destination, selected_by = destinations.resolve(audit, root, remote, destination_origin)
+    verify(root)
     ref = "refs/heads/" + audit["branch"]
     advertised = text(repo, "ls-remote", "--refs", destination, ref).split()
     if not advertised or advertised[0] != audit["old_head"]:
         raise ValueError("destination branch differs from recorded HEAD; run clean against the current source again")
-    confirm(f"Rewrite {destination} {ref}?", yes)
+    print(f"Push destination ({selected_by}): {json.dumps(destination)}; branch {ref}", file=sys.stderr)
+    confirm(f"Rewrite {destination!r} {ref}?", yes)
     pending = []
     uploaded = {}
     manifest.update(destination=destination, temporary_refs=pending)
@@ -356,8 +386,8 @@ def push(value, remote, yes=False, chunk_size=0):
                 uploaded[temporary] = oid
                 manifest["temporary_ref_oids"] = uploaded
                 save(root / "run.json", manifest)
-                git(repo, "push", f"--force-with-lease={temporary}:", destination, f"{oid}:{temporary}")
-        git(repo, "push", f"--force-with-lease={ref}:{audit['old_head']}",
+                git(repo, "push", "--no-follow-tags", "--recurse-submodules=no", f"--force-with-lease={temporary}:", destination, f"{oid}:{temporary}")
+        git(repo, "push", "--no-follow-tags", "--recurse-submodules=no", f"--force-with-lease={ref}:{audit['old_head']}",
             destination, f"{manifest['new_head']}:{ref}")
         manifest["state"] = "pushed"
     except Exception as exc:
@@ -369,7 +399,7 @@ def push(value, remote, yes=False, chunk_size=0):
                 # Delete only the value we uploaded, never a concurrently changed ref.
                 current = text(repo, "ls-remote", "--refs", destination, temporary).split()
                 if current:
-                    git(repo, "push", f"--force-with-lease={temporary}:{uploaded[temporary]}", destination, ":" + temporary)
+                    git(repo, "push", "--no-follow-tags", "--recurse-submodules=no", f"--force-with-lease={temporary}:{uploaded[temporary]}", destination, ":" + temporary)
                 pending.remove(temporary)
             except RuntimeError:
                 pass
@@ -377,14 +407,6 @@ def push(value, remote, yes=False, chunk_size=0):
     return {"pushed": True, "destination": destination, "temporary_refs_remaining": pending}
 
 
-def cleanup(value, yes=False):
-    root, manifest = load_run(value)
-    if manifest.get("temporary_refs"):
-        raise ValueError("temporary remote refs remain; resolve them before deleting this run")
-    allowed = {"run.json", "rewritten", "strip-blobs.txt",
-               "filename-callback.py", "verification.json", "audit.json"}
-    if any(p.name not in allowed or p.is_symlink() for p in root.iterdir()):
-        raise ValueError("run contains unexpected files or symlinks; refusing recursive deletion")
-    confirm(f"Delete run and cleaned repository at {root}?", yes)
-    shutil.rmtree(root)
-    return {"deleted": str(root)}
+def cleanup(value=None, yes=False):
+    from . import operations
+    return operations.cleanup(value, yes)

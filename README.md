@@ -42,52 +42,38 @@ invoked as `git history-cleaner` when its executable is on PATH.
 
 ## Complete workflow
 
-Install this source checkout first. In a disposable working clone of your project:
+Install this source checkout first. In a local working clone:
 
 ```sh
 git clone git@github.com:example/project.git project-cleaning
 cd project-cleaning
-# Optional preview: stdout only, no report/plan/run files
+# Optional preview: stdout only; no marker, report or plan is saved
 git-history-cleaner analyze --repo . --path assets --ext pdf,png,jpg
 git-history-cleaner analyze --repo . --path assets --ext pdf,png,jpg --json > analysis.json
-# Independently select current targets, rewrite and verify; no prior analyze needed
+# Independently select current targets, rewrite an isolated clone and verify
 git-history-cleaner clean --repo . --path assets --ext pdf,png,jpg
+# Optional recheck; push also re-verifies automatically
+git-history-cleaner verify
+# Discover the original push destination and confirm; clean never publishes
+git-history-cleaner push
+# Or explicitly override the destination
+# git-history-cleaner push --remote git@github.com:example/project.git
 ```
 
-Clean prints `verified`, `branch`, `old_head`, `new_head`, `run` and `repository`. For
-example, the exact absolute `run` might be `/work/project-cleaning/.git-history-cleaner-ab123`
-and `repository` its `rewritten` child. **Use the actual paths printed by your
-invocation** in the commands below. There is no latest-run lookup. You need no
-RUN variable, plan file, work directory option, or intermediate commands to clean.
-Publishing still requires `push --run` with that exact printed run path and an
-explicit `--remote` destination. Clean itself requires neither. A separate verify
-invocation is optional because push re-verifies automatically.
-The output remains at that path until you explicitly remove it. Do not move it
-while using the tool's verify/push/cleanup commands.
+No normal command requires `--run`, a RUN variable, a plan, or a path handoff.
+Clean prints `marker`, `repository`, `run`, `branch`, `old_head`, `new_head` and
+verification status. These paths are informational; following commands discover
+the unique operation automatically. You can inspect the printed repository with
+`git -C /ABSOLUTE/PRINTED/REPOSITORY log --oneline -10`.
 
-Review the result, then explicitly publish it:
+The destination branch must still equal the recorded `old_head`. Push confirms,
+re-verifies and uses an explicit expected-old-SHA lease. For unattended operation,
+supply `--yes` on that invocation. Only the selected branch is published; other
+branches and tags may retain old history. Protected branches may reject rewriting.
+Never substitute unconditional force, `--all` or `--mirror` to bypass scope.
 
-```sh
-git -C /work/project-cleaning/.git-history-cleaner-ab123/rewritten log --oneline -10
-git-history-cleaner verify --run /work/project-cleaning/.git-history-cleaner-ab123
-git-history-cleaner push --run /work/project-cleaning/.git-history-cleaner-ab123 \
-  --remote git@github.com:example/project.git
-# Optional: independently inspect the published branch tip
-git ls-remote git@github.com:example/project.git refs/heads/main
-```
-
-`push` re-verifies and asks for confirmation. For unattended execution, supply
-`--yes` explicitly. The destination branch must still equal `old_head`; its
-update uses an explicit `--force-with-lease=refs/heads/BRANCH:OLD_HEAD`. Concurrent
-updates are rejected. Only the selected branch is published: other branches and
-tags may retain old history. Branch protection may reject the update; coordinate
-with collaborators and administrators. Never substitute `--force`, `--all`, or
-`--mirror` to bypass these limits.
-
-For users who deliberately prefer raw Git, this is the equivalent branch-only
-publication **from the cleaned repository**, after verification. Replace all
-uppercase placeholders with exact values reported by clean; do not use the
-original source clone or assume `origin` exists (filter-repo may remove it).
+The equivalent raw Git operation, after verification and with exact printed
+values, is:
 
 ```sh
 git -C /ABSOLUTE/PRINTED/REPOSITORY push \
@@ -95,20 +81,107 @@ git -C /ABSOLUTE/PRINTED/REPOSITORY push \
   git@github.com:example/project.git NEW_HEAD:refs/heads/BRANCH
 ```
 
-Raw `git push` does not record the tool's pushed state; use the tool's `push`
-when you intend to use its `rebase` command later.
+Do not push from the original source clone or assume `origin` exists in the
+result. Raw Git push does not record the pushed state required by tool rebase.
 
-A remote source works without an initial manual clone, and never loads a
-configuration file from downloaded history:
+For a remote source, start in an ordinary directory outside any Git working tree:
 
 ```sh
+mkdir project-cleaning
+cd project-cleaning
 git-history-cleaner analyze --repo https://github.com/example/project.git \
   --branch main --path assets --ext pdf,png,jpg
 git-history-cleaner clean --repo https://github.com/example/project.git \
   --branch main --path assets --ext pdf,png,jpg
+git-history-cleaner push
+git-history-cleaner cleanup
 ```
 
-Use SSH or credential helpers; do not embed credentials in source/destination URLs.
+Remote sources never supply configuration automatically. Use SSH or credential
+helpers; do not embed credentials in source/destination URLs.
+
+## Push destination resolution
+
+`push` itself is always explicit; `--remote` is optional. Resolve one concrete
+URL or local bare path in this order:
+
+1. Explicit `push --remote URL_OR_PATH` (relative paths use invocation cwd).
+2. Flat TOML `remote = "URL_OR_PATH"` (relative paths use the config directory).
+3. Original source push policy saved during clean: for a local source, target
+   branch `pushRemote`, then `remote.pushDefault`, then target branch `remote`,
+   otherwise its sole configured remote. Use that remote's one pushurl, or its
+   one url if no pushurl exists. For a remote clean source, use its saved URL.
+
+A remote value is a destination, **not** a nickname such as `origin`. Ordinary
+strings are filesystem paths; use HTTP(S), SSH, Git, file URLs, or scp-style Git
+addresses for URLs. Command/helper protocols are unsupported. Local targets must
+be bare, must not be the original local source, and must not be inside the result.
+Missing or multiple remote choices/URLs, an explicit self-target policy (`.`),
+invalid values and a changed destination tip fail; nothing falls back elsewhere.
+The isolated clone's origin is never used for inference.
+
+Original Git push configuration is frozen at clean time; later source remote
+changes do not retarget the result. The selected TOML path is recorded as context,
+not a saved destination: push rereads it, so changing its `remote` intentionally
+changes that next push destination after lease checks and confirmation. Removing
+or corrupting a previously loaded config fails rather than silently retargeting.
+A newly created config at the recorded automatic path can be used. Explicit
+`push --config FILE` replaces this context; `--no-config` disables it. Marker
+`--run` context also uses that recorded file rather than an unrelated current tree.
+Selection/HEAD/audit policy remains frozen. Results made before destination
+snapshot support need an explicit CLI/config destination.
+
+Push displays the resolved destination and its origin on stderr before asking
+for confirmation, including with `--yes`. It always sends only the recorded branch
+with an explicit old-SHA lease; Git mirror/refspec/followTags/submodule-push
+settings do not broaden the operation. No automatic push occurs during clean.
+Default `rebase` fetches the recorded successful push destination, even if the
+clone's origin differs. An explicit rebase `--remote NAME_OR_URL` remains an expert
+override requiring the exact recorded new branch tip; flat TOML `remote` is not a
+rebase remote name.
+
+## Operation markers and recovery
+
+All commands use the same invocation scope: inside a Git working tree, its private
+Git directory (`git rev-parse --absolute-git-dir`); otherwise the current directory.
+Nested invocations share that worktree's scope; linked worktrees have separate
+private scopes. `--repo` selects a source or migration target and does not redirect
+operation discovery. Run following commands from the same scope, including when
+migrating another clone with `rebase --repo /path/to/existing-clone`.
+
+Clean reserves `.git-history-cleaner-operation-<UUID>.json` and creates the direct
+sibling `.git-history-cleaner-result-<UUID>/`. The marker contains only ownership,
+schema, identity and result-location metadata, never deletion targets or an
+execution plan. A directory lock plus exclusive marker reservation prevents
+concurrent tool operations. No permanent lock file is needed. Source files and
+Git history remain unchanged by clean; Git-directory metadata stays untracked.
+
+- Clean refuses any existing operation marker or leftover result in the scope,
+  including failed or uncertain artifacts. Analyze remains independent and writes
+  only to stdout.
+- Verify, push and rebase require exactly one valid complete operation. Zero means
+  run clean first; multiple operations mean ambiguity and refusal. There is no
+  newest-run choice.
+- An optional expert `--run /absolute/result` anchors discovery to that result's
+  recorded scope. It must match the sole operation and cannot override ambiguity.
+  For cleanup, it anchors the scope whose **all** operations will be considered;
+  it does not restrict deletion to just one result.
+- Cleanup preflights every candidate, prints the exact scope/paths/count, asks for
+  confirmation, rechecks after confirmation and removes all proven owned markers
+  and results. `--yes` explicitly confirms a batch invocation; cancellation deletes
+  nothing. It removes no source clone, external recovery branch or unrelated file.
+- Active operations cannot be cleaned. After interruption, intact reserved markers
+  or owned incomplete results can be cleaned once no operation holds the lock.
+  Missing/corrupt records, foreign files, unexpected content, altered result Git
+  metadata/recovery objects, extra refs, local/ignored work or unresolved remote
+  temporary refs cause refusal before deletion. Preserve your work yourself and
+  inspect uncertain data manually; do not rename arbitrary files to match a prefix.
+
+A crash during metadata initialization can leave incomplete/corrupt ownership
+records. Those require manual inspection, not prefix-based deletion. After a push
+interruption, inspect the destination before any retry: it may have updated before
+the local pushed state was recorded. Old markerless results are not discovered or
+adopted automatically; see [migration](docs/migration.md).
 
 ## Shared configuration
 
@@ -117,6 +190,7 @@ Create `.git-history-cleaner` at your working-tree root (a regular TOML file):
 ```toml
 schema_version = 1
 repo = "."
+remote = "git@github.com:example/project.git"
 branch = "main"
 path = ["assets", "archive"]
 exclude = ["assets/vendor"]
@@ -153,28 +227,28 @@ Explicit `--config` is relative to the invocation directory; configured filesyst
 repository. `--no-config` disables discovery; an explicit missing config is an error.
 
 Only the keys shown above are supported. No command sections, actions, `yes`,
-run/plan paths, push destinations, rebase remotes, cleanup scope, hooks or environment
+run/plan paths, rebase remote names, cleanup scope, hooks or environment
 interpolation are accepted. Unknown keys, malformed TOML, wrong types, unsupported
 schema, negative sizes and symlink/nonregular config files fail before work begins.
 Configuration never authorizes a push or deletion.
 
 ## Command list
 
-| Command | Purpose and required controls |
+| Command | Purpose |
 | --- | --- |
-| `analyze [selection options]` | Informational stdout preview, no saved plan |
-| `clean [selection options]` | Select, isolated rewrite and verification in one invocation |
-| `verify --run /absolute/run` | Recheck a completed clean run |
-| `push --run /absolute/run --remote URL [--yes] [--push-chunk-size N]` | Publish one verified branch with a lease |
-| `rebase --run /absolute/run --repo EXISTING_CLONE [--remote origin] [--branch NAME]` | Migrate local commits after a tool-recorded push; creates a backup branch |
-| `cleanup --run /absolute/run [--yes]` | Explicitly delete one recognized clean run and its result |
+| `analyze [selection options]` | Informational stdout preview; no operation artifacts |
+| `clean [selection options]` | Reserve an operation, select, isolated rewrite and verify |
+| `verify` | Recheck the unique operation |
+| `push [--remote URL_OR_PATH] [--yes] [--push-chunk-size N]` | Resolve destination, confirm and publish with a lease |
+| `rebase [--repo EXISTING_CLONE] [--remote NAME_OR_URL] [--branch NAME]` | Safely migrate commits after a tool-recorded push |
+| `cleanup [--yes]` | Confirmed cleanup of all proven operations in the scope |
 
 All commands support `--help`, `--config PATH` / `--no-config`, and `--json` /
-`--no-json`. `--version` is a top-level option. Shared selection applies to
-analyze/clean, repo/branch also to rebase, formatting to all commands.
-Other execution controls stay on the CLI. Verify, rebase and cleanup operate on
-current clean results: they are optional maintenance commands, not stages needed
-to finish clean. Clean already verifies, and push re-verifies before publishing.
+`--no-json`. `--version` is top-level. Selection settings apply to analyze/clean,
+repo/branch also to rebase, `remote` only to push, formatting to all commands. Verify, push, rebase and
+cleanup accept the optional expert `--run` scope anchor described above. It is
+never needed for the ordinary workflow. Verify/rebase/cleanup are maintenance
+commands; clean already completes local rewriting and verification by itself.
 See [CLI reference](docs/cli.md).
 
 ## Selection examples
@@ -241,39 +315,39 @@ cd project-fresh
 git log --oneline -10
 ```
 
-For controlled migration of commits based on the recorded old tip, use the
-completed run after publishing with the tool's `push`:
+For controlled migration of commits based on the recorded old tip, publish with
+the tool's push, then remain in the operation scope and run:
 
 ```sh
-git-history-cleaner rebase --no-config \
-  --repo /path/to/existing-clone \
-  --run /work/project-cleaning/.git-history-cleaner-ab123 --remote origin
+# Migrate the current source clone from the successfully published destination
+git-history-cleaner rebase --no-config
+# Or, from the same operation scope, migrate another existing clone
+git-history-cleaner rebase --no-config --repo /path/to/existing-clone --remote origin
 ```
 
-This requires a clean working tree, a local branch containing the old tip and a
-remote branch still exactly at the cleaned new tip. It fetches, checks identity,
-creates a backup branch, and rebases commits after the old tip (zero commits also
-works). Conflicts require manual `git rebase --continue` or `git rebase --abort`.
-Diverged histories or a remote with later commits need individual inspection.
-The backup branch intentionally retains old objects; remove it yourself only
-after checking the migrated work. Do not merge it back into the cleaned branch.
+The clone must have a clean working tree and contain the old tip. Its remote tip
+must still equal the cleaned new tip. Rebase retains a recovery branch and replays
+local commits (zero commits also works). For conflicts use `git rebase --continue`
+or `git rebase --abort`. Divergence or later remote commits require inspection.
+The recovery branch retains old objects; remove it yourself only after checking
+the migrated work. Never merge it back into the cleaned branch.
 
-Keep the run until publishing and migration are complete. A clean run holds the
-cleaned repository and completed verification/audit metadata, without a mirror
-backup or plan. Its source clone remains unchanged. Never place personal files
-in a run directory. Saved-plan runs from older versions are not accepted.
+After publication and migration, clean all associated operation artifacts:
 
 ```sh
-# Deletes the exact clean result, with confirmation
-git-history-cleaner cleanup --run /work/project-cleaning/.git-history-cleaner-ab123
+git-history-cleaner cleanup
+# Explicitly confirmed unattended cleanup
+git-history-cleaner cleanup --yes
 ```
 
-Cleanup refuses unexpected files, symlinks and unresolved temporary remote refs.
-Once the result is published and verified and your own work is preserved, you
-may remove the disposable project-cleaning clone yourself. Deleting that clone
-also deletes any run nested inside it. Cleanup does not delete the source clone
-or update other clones. Keep an original clone yourself if rollback is needed;
-clean does not create a separate backup of your work.
+Cleanup summarizes all proven artifacts and asks for confirmation. It never
+removes the source or recovery branches in existing clones. Do not put personal
+files or new commits in the isolated result; cleanup refuses detected changes,
+including additional object/reflog recovery data, untracked and ignored files.
+Keep your original work yourself if rollback is needed. You may remove a disposable
+source clone yourself after checking that your work is preserved; the cleaner
+never deletes it. Inside a Git working tree, marker and result artifacts live in
+its private Git directory and are removed by cleanup.
 
 ## Documentation
 
