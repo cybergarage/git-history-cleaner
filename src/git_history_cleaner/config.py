@@ -10,9 +10,9 @@ except ImportError:  # Python 3.10
 from . import core
 
 KEYS = {"schema_version": int, "repo": str, "branch": str, "path": list,
-        "exclude": list, "ext": list, "preset": str, "min_bytes": int, "json": bool}
+        "exclude": list, "ext": list, "preset": str, "min_bytes": int, "json": bool, "remote": str}
 SELECTION = {"repo", "branch", "path", "exclude", "ext", "preset", "min_bytes"}
-DEFAULTS = dict(repo=".", branch=None, path=[], exclude=[], ext=[], preset=None, min_bytes=0, json=False)
+DEFAULTS = dict(repo=".", branch=None, path=[], exclude=[], ext=[], preset=None, min_bytes=0, json=False, remote=None)
 
 
 def discover(repo):
@@ -58,21 +58,38 @@ def read(path):
     if source is not None and (source.startswith(("/", "./", "../", "~"))
                                or ":" not in source.split("/", 1)[0]):
         values["repo"] = str((path.parent / Path(source).expanduser()).resolve())
+    if "remote" in values:
+        from . import destinations
+        values["remote"] = destinations.normalize(values["remote"], path.parent)
     return values
 
 
-def resolve(args):
+def resolve(args, context=None):
     explicit = vars(args).copy()
     values = {}
+    path = None
+    loaded = False
     if not args.no_config:
-        path = Path(args.config).absolute() if args.config is not None else discover(explicit.get("repo", "."))
-        if path is not None and (args.config is not None or path.exists() or path.is_symlink()):
+        if args.config is not None:
+            path = Path(args.config).absolute()
+        elif context and context.get("path"):
+            path = Path(context["path"])
+        else:
+            path = discover(explicit.get("repo", "."))
+        required = args.config is not None or bool(context and context.get("loaded"))
+        if path is not None and (required or path.exists() or path.is_symlink()):
             values = read(path)
+            loaded = True
+    args._configuration = {"path": str(path) if path is not None else None, "loaded": loaded}
     applicable = {"json"}
     if args.command in {"analyze", "clean"}:
         applicable |= SELECTION
+    elif args.command == "push":
+        applicable |= {"remote"}
     elif args.command == "rebase":
         applicable |= {"repo", "branch"}
     for key in applicable:
         setattr(args, key, explicit.get(key, values.get(key, DEFAULTS[key])))
+    if args.command == "push":
+        args._destination_origin = "CLI --remote" if "remote" in explicit else ("TOML remote" if "remote" in values else None)
     return args

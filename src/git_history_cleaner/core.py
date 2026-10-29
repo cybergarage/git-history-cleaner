@@ -152,7 +152,8 @@ def inspect_source(repo, source, branch, rules):
     branch = branch or text(repo, "symbolic-ref", "--short", "HEAD")
     git(repo, "check-ref-format", "refs/heads/" + branch)
     old = text(repo, "rev-parse", "--verify", "refs/heads/" + branch + "^{commit}")
-    return {"source": source, "branch": branch, "old_head": old,
+    from . import destinations
+    return {"source": source, "source_push": destinations.original(source, branch), "branch": branch, "old_head": old,
             "old_tree": text(repo, "rev-parse", old + "^{tree}"),
             "rules": rules, "selection": selection(repo, old, rules)}
 
@@ -203,7 +204,8 @@ def _clean(args, directory):
     manifest = {"format": FORMAT, "run_id": identifier, "root": str(root),
                 "state": "rewriting", "workflow": "clean", "owner_uid": os.getuid(),
                 "source": source, "old_head": policy["old_head"], "branch": policy["branch"],
-                "operation_scope": str(directory), "operation_marker": operations.PREFIX + identifier + ".json"}
+                "operation_scope": str(directory), "operation_marker": operations.PREFIX + identifier + ".json",
+                "configuration": getattr(args, "_configuration", {"path": None, "loaded": False})}
     operations.create(directory, manifest)
     root.mkdir(mode=0o700)
     save(root / "run.json", manifest)
@@ -353,22 +355,21 @@ def confirm(message, yes):
         raise ValueError("not confirmed; use --yes for non-interactive operation")
 
 
-def push(value, remote, yes=False, chunk_size=0):
-    verify(value)
+def push(value, remote=None, yes=False, chunk_size=0, destination_origin=None):
     root, manifest = load_run(value)
     audit = load_audit(root, manifest)
     if manifest.get("temporary_refs"):
         raise ValueError("temporary refs from an earlier push remain; resolve them first")
     repo = safe_repo(root, "rewritten")
-    # Resolve before git -C changes the meaning of a relative local destination.
-    destination = str(Path(remote).resolve()) if Path(remote).exists() else remote
-    if destination.startswith("-"):
-        raise ValueError("remote must not start with '-'")
+    from . import destinations
+    destination, selected_by = destinations.resolve(audit, root, remote, destination_origin)
+    verify(root)
     ref = "refs/heads/" + audit["branch"]
     advertised = text(repo, "ls-remote", "--refs", destination, ref).split()
     if not advertised or advertised[0] != audit["old_head"]:
         raise ValueError("destination branch differs from recorded HEAD; run clean against the current source again")
-    confirm(f"Rewrite {destination} {ref}?", yes)
+    print(f"Push destination ({selected_by}): {json.dumps(destination)}; branch {ref}", file=sys.stderr)
+    confirm(f"Rewrite {destination!r} {ref}?", yes)
     pending = []
     uploaded = {}
     manifest.update(destination=destination, temporary_refs=pending)
@@ -385,8 +386,8 @@ def push(value, remote, yes=False, chunk_size=0):
                 uploaded[temporary] = oid
                 manifest["temporary_ref_oids"] = uploaded
                 save(root / "run.json", manifest)
-                git(repo, "push", f"--force-with-lease={temporary}:", destination, f"{oid}:{temporary}")
-        git(repo, "push", f"--force-with-lease={ref}:{audit['old_head']}",
+                git(repo, "push", "--no-follow-tags", "--recurse-submodules=no", f"--force-with-lease={temporary}:", destination, f"{oid}:{temporary}")
+        git(repo, "push", "--no-follow-tags", "--recurse-submodules=no", f"--force-with-lease={ref}:{audit['old_head']}",
             destination, f"{manifest['new_head']}:{ref}")
         manifest["state"] = "pushed"
     except Exception as exc:
@@ -398,7 +399,7 @@ def push(value, remote, yes=False, chunk_size=0):
                 # Delete only the value we uploaded, never a concurrently changed ref.
                 current = text(repo, "ls-remote", "--refs", destination, temporary).split()
                 if current:
-                    git(repo, "push", f"--force-with-lease={temporary}:{uploaded[temporary]}", destination, ":" + temporary)
+                    git(repo, "push", "--no-follow-tags", "--recurse-submodules=no", f"--force-with-lease={temporary}:{uploaded[temporary]}", destination, ":" + temporary)
                 pending.remove(temporary)
             except RuntimeError:
                 pass

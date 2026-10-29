@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Make push --remote optional: CLI > flat TOML remote > original source policy.
+  Capture branch pushRemote/pushDefault/remote and pushurl/url at clean time,
+  refuse ambiguity/self-targets, and preserve the exact branch/lease scope.
+- Reread saved config context for push; default rebase to the published destination.
+
 - Add strict flat repository-local TOML with explicit CLI precedence.
 - Analyze to stdout and remove the saved-plan compatibility workflow.
 - Add plan-free isolated clean with completed audit evidence and explicit leased publication.

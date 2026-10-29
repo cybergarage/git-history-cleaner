@@ -13,8 +13,8 @@ Use the supported commands:
 git-history-cleaner analyze --repo . --path assets --ext pdf,png,jpg
 # Independently select, rewrite an isolated clone and verify in one invocation
 git-history-cleaner clean --repo . --path assets --ext pdf,png,jpg
-# Explicit publication of the unique operation in this scope
-git-history-cleaner push --remote DESTINATION
+# Explicit publication, resolving destination from TOML or the original source
+git-history-cleaner push
 ```
 
 Do not pass an analysis report as an execution input. Clean creates no plan and
@@ -50,3 +50,13 @@ require exactly one valid operation; cleanup validates and confirms removal of
 all proven operations. Nothing selects a newest run. Optional expert `--run`
 anchors a recognized result's scope and never bypasses ambiguity; cleanup remains
 scope-wide. See [marker discovery/recovery](../README.md#operation-markers-and-recovery).
+
+## Optional push destination
+
+Push --remote remains supported but is no longer required. Flat TOML remote is a
+URL/bare path, not a command section or a rebase remote name. CLI overrides TOML,
+then clean's saved original push policy supplies inference. Previously created
+results without that snapshot need CLI/config remote. Push rereads its recorded
+config context; a removed previously loaded file fails until explicitly replaced
+or disabled with --no-config. Default rebase now follows the actual recorded push
+destination, rather than assuming origin. See the README resolution rules.

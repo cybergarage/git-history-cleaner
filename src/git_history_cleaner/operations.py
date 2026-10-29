@@ -122,9 +122,14 @@ def validate_root(root, directory, identifier):
     manifest = owned_file(root / "run.json")
     allowed = {"format", "workflow", "root", "run_id", "operation_scope", "operation_marker", "owner_uid",
                "state", "source", "old_head", "branch", "repo_metadata", "new_head", "audit_digest", "error",
-               "destination", "temporary_refs", "temporary_ref_oids"}
+               "destination", "temporary_refs", "temporary_ref_oids", "configuration"}
     if set(manifest) - allowed or any(type(manifest.get(key)) is not str for key in ("state", "source", "old_head", "branch")):
         raise ValueError("invalid or foreign result schema")
+    configuration = manifest.get("configuration")
+    if configuration is not None and (type(configuration) is not dict or set(configuration) != {"path", "loaded"}
+            or type(configuration["loaded"]) is not bool
+            or (configuration["path"] is not None and (type(configuration["path"]) is not str or not Path(configuration["path"]).is_absolute()))):
+        raise ValueError("invalid saved configuration context")
     if manifest["state"] not in {"rewriting", "verified", "pushed", "push-failed", "failed"}:
         raise ValueError("unknown result state")
     if (manifest.get("format") != core.FORMAT or manifest.get("workflow") != "clean"

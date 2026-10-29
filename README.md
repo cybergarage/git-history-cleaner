@@ -54,8 +54,10 @@ git-history-cleaner analyze --repo . --path assets --ext pdf,png,jpg --json > an
 git-history-cleaner clean --repo . --path assets --ext pdf,png,jpg
 # Optional recheck; push also re-verifies automatically
 git-history-cleaner verify
-# Explicit destination and confirmation; nothing is published by clean
-git-history-cleaner push --remote git@github.com:example/project.git
+# Discover the original push destination and confirm; clean never publishes
+git-history-cleaner push
+# Or explicitly override the destination
+# git-history-cleaner push --remote git@github.com:example/project.git
 ```
 
 No normal command requires `--run`, a RUN variable, a plan, or a path handoff.
@@ -91,12 +93,52 @@ git-history-cleaner analyze --repo https://github.com/example/project.git \
   --branch main --path assets --ext pdf,png,jpg
 git-history-cleaner clean --repo https://github.com/example/project.git \
   --branch main --path assets --ext pdf,png,jpg
-git-history-cleaner push --remote git@github.com:example/project.git
+git-history-cleaner push
 git-history-cleaner cleanup
 ```
 
 Remote sources never supply configuration automatically. Use SSH or credential
 helpers; do not embed credentials in source/destination URLs.
+
+## Push destination resolution
+
+`push` itself is always explicit; `--remote` is optional. Resolve one concrete
+URL or local bare path in this order:
+
+1. Explicit `push --remote URL_OR_PATH` (relative paths use invocation cwd).
+2. Flat TOML `remote = "URL_OR_PATH"` (relative paths use the config directory).
+3. Original source push policy saved during clean: for a local source, target
+   branch `pushRemote`, then `remote.pushDefault`, then target branch `remote`,
+   otherwise its sole configured remote. Use that remote's one pushurl, or its
+   one url if no pushurl exists. For a remote clean source, use its saved URL.
+
+A remote value is a destination, **not** a nickname such as `origin`. Ordinary
+strings are filesystem paths; use HTTP(S), SSH, Git, file URLs, or scp-style Git
+addresses for URLs. Command/helper protocols are unsupported. Local targets must
+be bare, must not be the original local source, and must not be inside the result.
+Missing or multiple remote choices/URLs, an explicit self-target policy (`.`),
+invalid values and a changed destination tip fail; nothing falls back elsewhere.
+The isolated clone's origin is never used for inference.
+
+Original Git push configuration is frozen at clean time; later source remote
+changes do not retarget the result. The selected TOML path is recorded as context,
+not a saved destination: push rereads it, so changing its `remote` intentionally
+changes that next push destination after lease checks and confirmation. Removing
+or corrupting a previously loaded config fails rather than silently retargeting.
+A newly created config at the recorded automatic path can be used. Explicit
+`push --config FILE` replaces this context; `--no-config` disables it. Marker
+`--run` context also uses that recorded file rather than an unrelated current tree.
+Selection/HEAD/audit policy remains frozen. Results made before destination
+snapshot support need an explicit CLI/config destination.
+
+Push displays the resolved destination and its origin on stderr before asking
+for confirmation, including with `--yes`. It always sends only the recorded branch
+with an explicit old-SHA lease; Git mirror/refspec/followTags/submodule-push
+settings do not broaden the operation. No automatic push occurs during clean.
+Default `rebase` fetches the recorded successful push destination, even if the
+clone's origin differs. An explicit rebase `--remote NAME_OR_URL` remains an expert
+override requiring the exact recorded new branch tip; flat TOML `remote` is not a
+rebase remote name.
 
 ## Operation markers and recovery
 
@@ -148,6 +190,7 @@ Create `.git-history-cleaner` at your working-tree root (a regular TOML file):
 ```toml
 schema_version = 1
 repo = "."
+remote = "git@github.com:example/project.git"
 branch = "main"
 path = ["assets", "archive"]
 exclude = ["assets/vendor"]
@@ -184,7 +227,7 @@ Explicit `--config` is relative to the invocation directory; configured filesyst
 repository. `--no-config` disables discovery; an explicit missing config is an error.
 
 Only the keys shown above are supported. No command sections, actions, `yes`,
-run/plan paths, push destinations, rebase remotes, cleanup scope, hooks or environment
+run/plan paths, rebase remote names, cleanup scope, hooks or environment
 interpolation are accepted. Unknown keys, malformed TOML, wrong types, unsupported
 schema, negative sizes and symlink/nonregular config files fail before work begins.
 Configuration never authorizes a push or deletion.
@@ -196,13 +239,13 @@ Configuration never authorizes a push or deletion.
 | `analyze [selection options]` | Informational stdout preview; no operation artifacts |
 | `clean [selection options]` | Reserve an operation, select, isolated rewrite and verify |
 | `verify` | Recheck the unique operation |
-| `push --remote URL [--yes] [--push-chunk-size N]` | Explicit publication with confirmation and lease |
-| `rebase [--repo EXISTING_CLONE] [--remote origin] [--branch NAME]` | Safely migrate commits after a tool-recorded push |
+| `push [--remote URL_OR_PATH] [--yes] [--push-chunk-size N]` | Resolve destination, confirm and publish with a lease |
+| `rebase [--repo EXISTING_CLONE] [--remote NAME_OR_URL] [--branch NAME]` | Safely migrate commits after a tool-recorded push |
 | `cleanup [--yes]` | Confirmed cleanup of all proven operations in the scope |
 
 All commands support `--help`, `--config PATH` / `--no-config`, and `--json` /
 `--no-json`. `--version` is top-level. Selection settings apply to analyze/clean,
-repo/branch also to rebase, formatting to all commands. Verify, push, rebase and
+repo/branch also to rebase, `remote` only to push, formatting to all commands. Verify, push, rebase and
 cleanup accept the optional expert `--run` scope anchor described above. It is
 never needed for the ordinary workflow. Verify/rebase/cleanup are maintenance
 commands; clean already completes local rewriting and verification by itself.
@@ -276,7 +319,7 @@ For controlled migration of commits based on the recorded old tip, publish with
 the tool's push, then remain in the operation scope and run:
 
 ```sh
-# Migrate the current source clone using its origin remote
+# Migrate the current source clone from the successfully published destination
 git-history-cleaner rebase --no-config
 # Or, from the same operation scope, migrate another existing clone
 git-history-cleaner rebase --no-config --repo /path/to/existing-clone --remote origin

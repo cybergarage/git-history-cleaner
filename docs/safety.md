@@ -105,3 +105,14 @@ Object inventory uses file identity/size/change times instead of rereading entir
 packs; arbitrary hostile concurrent filesystem writes are outside the local
 trusted-user model. All cooperating tool operations share the scope lock. A crash
 mid-deletion can leave partial artifacts; inspect uncertain remaining data manually.
+
+## Destination policy
+
+The original source's push remote/URL is captured at clean time; the isolated
+clone's origin is never trusted as a publication default. Push resolves explicit
+CLI, then live flat TOML remote, then the saved source policy. Ambiguous/missing
+policies and self/local-working-tree targets fail instead of choosing another
+remote. Config context is retained and reread deliberately; missing prior config
+fails. Review the resolved destination shown before confirmation. Every path
+retains the recorded branch, old-tip check and explicit lease. Default rebase
+fetches the successfully recorded destination and checks its exact new tip.

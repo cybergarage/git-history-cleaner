@@ -55,13 +55,24 @@ unselected refs, or that removed data is absent from every other clone.
 
 ## push
 
-`push --remote DESTINATION [--yes] [--push-chunk-size N]`
+`push [--remote DESTINATION] [--yes] [--push-chunk-size N]`
 
-DESTINATION is a clone URL or local bare repository path, not a remote nickname.
-It is deliberately mandatory, even when the analysis source was remote. This
-command re-verifies the run and requires the destination branch to match the
-original commit before any preload. Its final push has an explicit old-OID lease.
-Other branches and tags are not pushed.
+DESTINATION is a concrete URL or local bare path, never a nickname. Resolution is
+explicit CLI > flat TOML remote > original source push policy captured by clean.
+Local source policy chooses target-branch pushRemote, remote.pushDefault,
+target-branch remote, or the sole configured remote, in that order, using exactly
+one pushurl/url. Missing/multiple/self-target policies fail. Remote source fallback
+uses its saved URL. Isolated origin is never an inference source. Relative CLI
+paths use invocation cwd; TOML paths use the configuration directory; original
+relative remote paths use the original repository directory.
+
+Push rereads the recorded config context unless --config replaces it or --no-config
+disables it. A previously loaded but missing file is an error. Original Git remote
+changes after clean do not alter saved inference. Only the destination is selected
+at push; saved selection/ref/HEAD policy stays frozen. Destination and provenance
+are shown on stderr before confirmation. The destination tip must match old_head,
+and only the recorded branch is sent with an explicit expected-old-SHA lease.
+Mirror/refspec/followTags/submodule settings do not broaden the push.
 
 The default chunk size is 0 (disabled). A positive value preloads checkpoints
 through temporary branches and then deletes them with leases. It handles
@@ -74,10 +85,12 @@ Non-interactive push requires `--yes`. For machine use, combine `--yes --json`.
 
 ## rebase
 
-`rebase [--repo PATH] [--remote origin] [--branch NAME]`
+`rebase [--repo PATH] [--remote NAME_OR_URL] [--branch NAME]`
 
 Replays local work after the old tip onto the verified new tip; the run must have
-been pushed. The local branch uses explicit CLI/config branch, otherwise the recorded branch. It must contain
+been pushed. By default fetch the recorded successful push destination; an
+explicit --remote name/URL is an expert override that must produce the same new
+tip. TOML remote applies only to push. The local branch uses explicit CLI/config branch, otherwise the recorded branch. It must contain
 the old tip and have a clean worktree. A branch with no new commits is moved to
 the new base. The fetched branch must exactly match the run's new tip; later
 remote commits need manual inspection. Backup branches are always retained.

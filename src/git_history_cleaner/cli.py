@@ -32,7 +32,7 @@ def parser():
     verify.add_argument("--run", help="optional expert scope anchor; never bypasses ambiguity")
     push = sub.add_parser("push", help="explicitly publish a verified rewrite using a lease")
     push.add_argument("--run", help="optional expert scope anchor; never bypasses ambiguity")
-    push.add_argument("--remote", required=True, help="destination URL or local bare repository path")
+    push.add_argument("--remote", default=argparse.SUPPRESS, help="destination URL/bare path; default TOML remote, then saved original source")
     push.add_argument("--yes", action="store_true")
     push.add_argument("--push-chunk-size", type=nonnegative, default=0)
     cleanup = sub.add_parser("cleanup", help="confirm cleanup of all proven operation artifacts in this scope")
@@ -41,7 +41,7 @@ def parser():
     rebase = sub.add_parser("rebase", help="replay local commits onto a rewritten branch; preserve a backup")
     rebase.add_argument("--run", help="optional expert scope anchor; never bypasses ambiguity")
     rebase.add_argument("--repo", default=argparse.SUPPRESS)
-    rebase.add_argument("--remote", default="origin", help="remote name in the existing clone")
+    rebase.add_argument("--remote", help="optional fetch remote name/URL; default recorded successful push destination")
     rebase.add_argument("--branch", default=argparse.SUPPRESS, help="local branch (default: branch recorded in audit)")
     for command in sub.choices.values():
         formatting = command.add_mutually_exclusive_group()
@@ -62,12 +62,13 @@ def rebase_run(args):
     repo = Path(args.repo).resolve()
     branch = args.branch or audit["branch"]
     core.git(repo, "check-ref-format", "refs/heads/" + branch)
-    if args.remote.startswith("-"):
+    remote = args.remote if args.remote is not None else manifest.get("destination")
+    if not remote or remote.startswith("-"):
         raise ValueError("remote must not start with '-'")
     if core.text(repo, "status", "--porcelain"):
         raise ValueError("local working tree must be clean")
     # Fetch into FETCH_HEAD: do not depend on tracking configuration.
-    core.git(repo, "fetch", args.remote, "refs/heads/" + audit["branch"])
+    core.git(repo, "fetch", "--no-tags", "--recurse-submodules=no", remote, "refs/heads/" + audit["branch"])
     onto = core.text(repo, "rev-parse", "FETCH_HEAD")
     if onto != manifest["new_head"]:
         raise ValueError("remote tip does not match this run; inspect subsequent commits manually")
@@ -85,7 +86,8 @@ def rebase_run(args):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
-        args = config.resolve(args)
+        if args.command != "push":
+            args = config.resolve(args)
         if args.command == "clean":
             result = core.clean(args)
         elif args.command == "analyze":
@@ -97,7 +99,9 @@ def main(argv=None):
                 if args.command == "verify":
                     result = core.verify(root)
                 elif args.command == "push":
-                    result = core.push(root, args.remote, args.yes, args.push_chunk_size)
+                    _, manifest = core.load_run(root)
+                    args = config.resolve(args, context=manifest.get("configuration"))
+                    result = core.push(root, args.remote, args.yes, args.push_chunk_size, args._destination_origin)
                 else:
                     args.run = str(root)
                     result = rebase_run(args)
