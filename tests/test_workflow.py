@@ -14,7 +14,7 @@ from git_history_cleaner import core
 from git_history_cleaner.cli import main
 
 
-class Workflow(unittest.TestCase):
+class Fixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="history-cleaner-test-")
         self.addCleanup(self.temp.cleanup)
@@ -40,7 +40,7 @@ class Workflow(unittest.TestCase):
         options = dict(repo=str(self.repo), branch=None, path=["assets"], exclude=[],
                        ext=["pdf"], preset=None, min_bytes=0, work_dir=str(self.root / "run"))
         options.update(kwargs)
-        return core.analyze(argparse.Namespace(**options))
+        return core.legacy_analyze(argparse.Namespace(**options))
 
     def old_asset(self):
         self.write("assets/document.pdf", "obsolete")
@@ -52,6 +52,8 @@ class Workflow(unittest.TestCase):
         result = self.analyze(**kwargs)
         return core.rewrite(result["plan"])
 
+
+class Workflow(Fixture):
     def test_full_workflow_and_short_preload(self):
         self.old_asset()
         before = core.text(self.repo, "rev-parse", "HEAD")
@@ -325,7 +327,7 @@ class Workflow(unittest.TestCase):
 
     def test_json_failure(self):
         output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        with contextlib.redirect_stderr(output):
             code = main(["verify", "--run", str(self.root / "missing"), "--json"])
         self.assertEqual(1, code)
         self.assertIn("error", json.loads(output.getvalue()))

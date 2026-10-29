@@ -110,18 +110,24 @@ def selection(repo, revision, rules):
             "matched_paths": len(targets)}
 
 
-def analyze(args):
+def resolve_selection(args):
     source = args.repo
+    if not source or "\0" in source:
+        raise ValueError("repository must be a nonempty path or URL")
     local = Path(source).expanduser()
     if local.exists():
-        source = str(local.resolve())
-    if source.startswith("-"):
+        source = (text(local, "rev-parse", "--show-toplevel")
+                  if text(local, "rev-parse", "--is-inside-work-tree") == "true"
+                  else str(local.resolve()))
+    if not source or "\0" in source or source.startswith("-"):
         raise ValueError("repository must not start with '-'")
+    if args.branch is not None:
+        git(Path.cwd(), "check-ref-format", "refs/heads/" + args.branch)
     extensions = []
     for value in args.ext:
         for ext in value.split(","):
             ext = ext.strip().lower().lstrip(".")
-            if not ext or "/" in ext:
+            if not ext or "/" in ext or "\0" in ext:
                 raise ValueError("invalid extension")
             extensions.append("." + ext)
     if args.preset:
@@ -131,6 +137,120 @@ def analyze(args):
     rules = {"paths": [literal_path(p) for p in args.path] or ["."],
              "exclude": [literal_path(p) for p in args.exclude],
              "extensions": sorted(set(extensions)), "min_bytes": args.min_bytes}
+    return source, rules
+
+
+def inspect_source(repo, source, branch, rules):
+    if text(repo, "rev-parse", "--is-shallow-repository") == "true":
+        raise ValueError("shallow history is unsupported; use a full repository")
+    branch = branch or text(repo, "symbolic-ref", "--short", "HEAD")
+    git(repo, "check-ref-format", "refs/heads/" + branch)
+    old = text(repo, "rev-parse", "--verify", "refs/heads/" + branch + "^{commit}")
+    return {"source": source, "branch": branch, "old_head": old,
+            "old_tree": text(repo, "rev-parse", old + "^{tree}"),
+            "rules": rules, "selection": selection(repo, old, rules)}
+
+
+def clone_inspection(temporary, source, branch):
+    options = ["--branch", branch] if branch is not None else []
+    git(temporary, "clone", "--bare", "--single-branch", "--no-tags", "--no-local",
+        *options, "--", source, "source.git")
+
+
+def analyze(args):
+    """Inspect locally without writes; remote inspection uses an ephemeral clone."""
+    source, rules = resolve_selection(args)
+    if Path(source).exists():
+        policy = inspect_source(source, source, args.branch, rules)
+    else:
+        with tempfile.TemporaryDirectory(prefix="history-cleaner-inspect-") as temporary:
+            clone_inspection(temporary, source, args.branch)
+            policy = inspect_source(Path(temporary) / "source.git", source, args.branch, rules)
+    return {"source": source, "branch": policy["branch"], "head": policy["old_head"],
+            "rules": rules, **policy["selection"]}
+
+
+def clean(args):
+    """Freeze policy in memory; retain only completed verification/audit evidence."""
+    source, rules = resolve_selection(args)
+    # Validate source and freeze its tip before allocating a persistent workspace.
+    local = Path(source).exists()
+    if local:
+        policy = inspect_source(source, source, args.branch, rules)
+    else:
+        with tempfile.TemporaryDirectory(prefix="history-cleaner-inspect-") as temporary:
+            clone_inspection(temporary, source, args.branch)
+            policy = inspect_source(Path(temporary) / "source.git", source, args.branch, rules)
+    root = Path(tempfile.mkdtemp(prefix=".git-history-cleaner-", dir=Path.cwd())).resolve()
+    manifest = {"format": FORMAT, "run_id": str(uuid.uuid4()), "root": str(root),
+                "state": "rewriting", "workflow": "clean"}
+    save(root / "run.json", manifest)
+    try:
+        repo = safe_repo(root, "rewritten")
+        git(root, "clone", "--no-local", "--no-tags", "--single-branch", "--branch", policy["branch"],
+            "--", source, str(repo))
+        if text(repo, "rev-parse", "HEAD") != policy["old_head"]:
+            raise ValueError("source branch changed during clean; retry")
+        if selection(repo, policy["old_head"], rules) != policy["selection"]:
+            raise ValueError("source selection changed during clean; retry")
+        check_source(root, policy, args.branch is None)
+        apply_selection(root, repo, policy["selection"])
+        manifest["new_head"] = text(repo, "rev-parse", "HEAD")
+        check_result(repo, manifest, policy)
+        # This is completed-run evidence, never an input to a rewrite.
+        save(root / "audit.json", policy)
+        manifest.update(state="verified", audit_digest=digest(policy))
+        save(root / "run.json", manifest)
+        return verify(root)
+    except Exception as exc:
+        manifest.update(state="failed", error=str(exc))
+        save(root / "run.json", manifest)
+        raise RuntimeError(f"{exc} (artifacts: {root})") from exc
+
+
+def check_source(root, policy, default_branch):
+    """Reject selected-ref changes and default-HEAD switches before filtering."""
+    source, branch = policy["source"], policy["branch"]
+    ref = "refs/heads/" + branch
+    if Path(source).exists():
+        if text(source, "rev-parse", ref) != policy["old_head"]:
+            raise ValueError("source branch changed during clean; retry")
+        if default_branch:
+            try:
+                current = text(source, "symbolic-ref", "--short", "HEAD")
+            except RuntimeError as exc:
+                raise ValueError("source HEAD changed during clean; retry") from exc
+            if current != branch:
+                raise ValueError("source HEAD changed during clean; retry")
+    else:
+        advertised = text(root, "ls-remote", "--symref", "--", source, "HEAD", ref).splitlines()
+        refs = {name: oid for oid, name in (line.split("\t", 1) for line in advertised)}
+        if refs.get(ref) != policy["old_head"]:
+            raise ValueError("source branch changed during clean; retry")
+        if default_branch and refs.get("HEAD") != policy["old_head"]:
+            raise ValueError("source HEAD changed during clean; retry")
+        if default_branch and f"ref: {ref}\tHEAD" not in advertised:
+            raise ValueError("source HEAD changed during clean; retry")
+
+
+def apply_selection(root, repo, chosen):
+    if chosen["deleted_paths"] or chosen["strip_blobs"]:
+        ids = root / "strip-blobs.txt"
+        callback_path = root / "filename-callback.py"
+        ids.write_text("\n".join(chosen["strip_blobs"]) + "\n", encoding="ascii")
+        removed = {p.encode("utf-8", "surrogateescape") for p in chosen["deleted_paths"]}
+        callback_path.write_text(f"return None if filename in {removed!r} else filename", encoding="ascii")
+        try:
+            git(repo, "filter-repo", "--force", "--filename-callback", str(callback_path),
+                "--strip-blobs-with-ids", str(ids), "--replace-refs", "delete-no-add",
+                "--prune-empty", "never", "--prune-degenerate", "never")
+        finally:
+            ids.unlink(missing_ok=True)
+            callback_path.unlink(missing_ok=True)
+
+
+def legacy_analyze(args):
+    source, rules = resolve_selection(args)
     if args.work_dir:
         root = Path(args.work_dir).absolute()
         root.mkdir(parents=True, exist_ok=False)
@@ -178,9 +298,14 @@ def load_run(value):
 
 
 def load_plan(root, manifest):
+    if manifest.get("workflow") == "clean":
+        audit = json.loads((root / "audit.json").read_text(encoding="utf-8"))
+        if digest(audit) != manifest.get("audit_digest"):
+            raise ValueError("completed audit changed")
+        return audit
     plan = json.loads((root / "plan.json").read_text(encoding="utf-8"))
     if plan.get("run_id") != manifest["run_id"] or digest(plan) != manifest.get("plan_digest"):
-        raise ValueError("plan changed; create a new analysis instead of editing the plan")
+        raise ValueError("plan changed; use analyze-legacy to create a new plan instead of editing it")
     return plan
 
 
@@ -203,7 +328,7 @@ def rewrite(plan_path):
     backup = safe_repo(root, "backup.git")
     ref = "refs/heads/" + plan["branch"]
     if text(backup, "rev-parse", ref) != plan["old_head"]:
-        raise ValueError("backup branch changed; analyze again")
+        raise ValueError("backup branch changed; use analyze-legacy to create a new run")
     actual = selection(backup, plan["old_head"], plan["rules"])
     if actual != plan["selection"]:
         raise ValueError("backup no longer matches the plan")
@@ -213,18 +338,7 @@ def rewrite(plan_path):
         repo = safe_repo(root, "rewritten")
         git(root, "clone", "--no-local", "--no-tags", "--single-branch", "--branch", plan["branch"],
             str(backup), str(repo))
-        chosen = plan["selection"]
-        if chosen["deleted_paths"] or chosen["strip_blobs"]:
-            ids = root / "strip-blobs.txt"
-            ids.write_text("\n".join(chosen["strip_blobs"]) + "\n", encoding="ascii")
-            removed = {p.encode("utf-8", "surrogateescape") for p in chosen["deleted_paths"]}
-            callback = f"return None if filename in {removed!r} else filename"
-            # A file avoids argv limits when many paths were deleted.
-            callback_path = root / "filename-callback.py"
-            callback_path.write_text(callback, encoding="ascii")
-            git(repo, "filter-repo", "--force", "--filename-callback", str(callback_path),
-                "--strip-blobs-with-ids", str(ids), "--replace-refs", "delete-no-add",
-                "--prune-empty", "never", "--prune-degenerate", "never")
+        apply_selection(root, repo, plan["selection"])
         manifest.update(state="rewritten", new_head=text(repo, "rev-parse", "HEAD"))
         save(root / "run.json", manifest)
         return verify(root)
@@ -240,6 +354,18 @@ def verify(value):
         raise ValueError("run has no completed rewrite to verify")
     plan = load_plan(root, manifest)
     repo = safe_repo(root, "rewritten")
+    check_result(repo, manifest, plan)
+    if manifest["state"] != "pushed":
+        manifest["state"] = "verified"
+    save(root / "run.json", manifest)
+    result = {"run": str(root), "repository": str(repo), "verified": True, "head_tree_preserved": True,
+              "branch": plan["branch"], "old_head": plan["old_head"], "new_head": manifest["new_head"],
+              "scope": "selected branch only"}
+    save(root / "verification.json", result)
+    return result
+
+
+def check_result(repo, manifest, plan):
     if text(repo, "rev-parse", "HEAD") != manifest["new_head"]:
         raise ValueError("rewritten HEAD changed")
     if text(repo, "status", "--porcelain"):
@@ -253,14 +379,6 @@ def verify(value):
         raise ValueError("verification failed: selected blobs remain reachable")
     if set(plan["selection"]["deleted_paths"]) & set(history):
         raise ValueError("verification failed: deleted paths remain reachable")
-    if manifest["state"] != "pushed":
-        manifest["state"] = "verified"
-    save(root / "run.json", manifest)
-    result = {"run": str(root), "verified": True, "head_tree_preserved": True,
-              "old_head": plan["old_head"], "new_head": manifest["new_head"],
-              "scope": "selected branch only"}
-    save(root / "verification.json", result)
-    return result
 
 
 def confirm(message, yes):
@@ -285,7 +403,7 @@ def push(value, remote, yes=False, chunk_size=0):
     ref = "refs/heads/" + plan["branch"]
     advertised = text(repo, "ls-remote", "--refs", destination, ref).split()
     if not advertised or advertised[0] != plan["old_head"]:
-        raise ValueError("destination branch differs from analyzed HEAD; analyze again")
+        raise ValueError("destination branch differs from recorded HEAD; run clean against the current source again (or analyze-legacy then rewrite)")
     confirm(f"Rewrite {destination} {ref}?", yes)
     pending = []
     uploaded = {}
@@ -326,14 +444,15 @@ def push(value, remote, yes=False, chunk_size=0):
 
 def cleanup(value, yes=False, include_backup=False):
     root, manifest = load_run(value)
-    if not include_backup:
+    if manifest.get("workflow") != "clean" and not include_backup:
         raise ValueError("cleanup deletes the mirror backup; specify --include-backup")
     if manifest.get("temporary_refs"):
         raise ValueError("temporary remote refs remain; resolve them before deleting this run")
     allowed = {"run.json", "plan.json", "backup.git", "rewritten", "strip-blobs.txt",
-               "filename-callback.py", "verification.json"}
+               "filename-callback.py", "verification.json", "audit.json"}
     if any(p.name not in allowed or p.is_symlink() for p in root.iterdir()):
         raise ValueError("run contains unexpected files or symlinks; refusing recursive deletion")
-    confirm(f"Delete run and mirror backup at {root}?", yes)
+    scope = "run and mirror backup" if (root / "backup.git").exists() else "run and cleaned repository"
+    confirm(f"Delete {scope} at {root}?", yes)
     shutil.rmtree(root)
     return {"deleted": str(root)}
