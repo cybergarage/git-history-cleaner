@@ -8,6 +8,29 @@ from test_workflow import Fixture
 
 
 class Uploads(Fixture):
+    def test_verified_inventory_reused_only_for_unchanged_metadata(self):
+        self.old_asset()
+        result = self.clean()
+        with mock.patch.object(core, "inventory", wraps=core.inventory) as scan:
+            core.verify(result["run"])
+            scan.assert_not_called()
+        # Additional object/recovery data invalidates the fingerprint even if
+        # HEAD and the current tree have not changed.
+        core.git(result["repository"], "hash-object", "-w", "--stdin", data=b"new object")
+        with mock.patch.object(core, "inventory", wraps=core.inventory) as scan:
+            core.verify(result["run"])
+            scan.assert_called_once()
+
+    def test_changed_saved_report_forces_full_inventory(self):
+        result = self.clean()
+        report = Path(result["run"]) / "verification.json"
+        saved = json.loads(report.read_text())
+        saved["head_tree_preserved"] = False
+        report.write_text(json.dumps(saved))
+        with mock.patch.object(core, "inventory", wraps=core.inventory) as scan:
+            core.verify(result["run"])
+            scan.assert_called_once()
+
     def remote(self):
         bare = self.root / "remote.git"
         core.git(self.root, "clone", "--bare", str(self.repo), str(bare))

@@ -335,19 +335,29 @@ def verify(value):
         raise ValueError("run has no completed clean to verify")
     audit = load_audit(root, manifest)
     repo = safe_repo(root, "rewritten")
-    check_result(repo, manifest, audit)
-    if manifest["state"] != "pushed":
-        manifest["state"] = "verified"
-    save(root / "run.json", manifest)
     result = {"run": str(root), "marker": str(root.parent / manifest["operation_marker"]),
               "repository": str(repo), "verified": True, "head_tree_preserved": True,
               "branch": audit["branch"], "old_head": audit["old_head"], "new_head": manifest["new_head"],
               "scope": "selected branch only"}
+    from . import operations
+    reuse_history = False
+    try:
+        reuse_history = (operations.owned_file(root / "verification.json") == result
+                         and operations.metadata_fingerprint(repo) == manifest.get("repo_metadata"))
+    except (OSError, ValueError):
+        pass  # Missing or changed evidence always takes the full verification path.
+    check_result(repo, manifest, audit, reuse_history=reuse_history)
+    if reuse_history:
+        print("Reused verified history inventory: saved report and repository metadata match; "
+              "HEAD, worktree, tree and fsck rechecked", file=sys.stderr, flush=True)
+    if manifest["state"] != "pushed":
+        manifest["state"] = "verified"
+    save(root / "run.json", manifest)
     save(root / "verification.json", result)
     return result
 
 
-def check_result(repo, manifest, audit):
+def check_result(repo, manifest, audit, reuse_history=False):
     if text(repo, "rev-parse", "HEAD") != manifest["new_head"]:
         raise ValueError("rewritten HEAD changed")
     if text(repo, "status", "--porcelain"):
@@ -355,6 +365,8 @@ def check_result(repo, manifest, audit):
     if text(repo, "rev-parse", "HEAD^{tree}") != audit["old_tree"]:
         raise ValueError("verification failed: HEAD tree changed")
     git(repo, "fsck", "--full")
+    if reuse_history:
+        return
     history = inventory(repo, "HEAD")
     all_ids = set().union(*history.values()) if history else set()
     if set(audit["selection"]["strip_blobs"]) & all_ids:

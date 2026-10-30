@@ -8,6 +8,8 @@
   expected-old-SHA lease and refuse changed checkpoints or destinations.
 - Reconcile lost push responses against remote refs, recognize already published
   rewritten HEADs, and capture Git transfer progress in failure diagnostics.
+- Reuse an unchanged verified historical inventory only when the owned report
+  and Git metadata fingerprint match; always recheck HEAD/worktree/tree/fsck.
 - Retain checkpoint refs on failure; remove owned refs with leases after success.
 
 ## 1.1.0 — 2026-10-29

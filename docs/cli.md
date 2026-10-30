@@ -138,3 +138,10 @@ scope selection to that recognized result. It cannot bypass multiple-operation
 ambiguity. Cleanup still considers all operations in the anchored scope. Old
 markerless/saved-plan runs are not automatically adopted or accepted by this
 selector. See [migration](migration.md).
+
+On repeated verification, an identical owned verification report and matching
+repository metadata fingerprint allow reuse of the historical inventory. The
+fingerprint covers object file identity, size, nanosecond modification/change
+times, and non-index Git metadata contents. HEAD, worktree, current tree and
+`git fsck --full` are always rechecked. Missing/changed evidence takes the full
+historical scan; this also works with intact v1.1.0 results.

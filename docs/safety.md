@@ -124,3 +124,10 @@ remote. Config context is retained and reread deliberately; missing prior config
 fails. Review the resolved destination shown before confirmation. Every path
 retains the recorded branch, old-tip check and explicit lease. Default rebase
 fetches the successfully recorded destination and checks its exact new tip.
+
+On repeated verification, an identical owned verification report and matching
+repository metadata fingerprint allow reuse of the historical inventory. The
+fingerprint covers object file identity, size, nanosecond modification/change
+times, and non-index Git metadata contents. HEAD, worktree, current tree and
+`git fsck --full` are always rechecked. Missing/changed evidence takes the full
+historical scan; this also works with intact v1.1.0 results.
