@@ -1,8 +1,8 @@
-# Prepare and publish 1.1.0
+# Prepare and publish 1.1.1
 
 The distribution name is `git-history-cleaner`, the import name is
 `git_history_cleaner`, and the executable is `git-history-cleaner`.
-The license is MIT. Package metadata and `__version__` must agree on `1.1.0`.
+The license is MIT. Package metadata and `__version__` must agree on `1.1.1`.
 The GitHub repository is `cybergarage/git-history-cleaner`.
 Publisher settings must use this repository name.
 
@@ -26,7 +26,7 @@ is present. Install the resulting wheel in another environment:
 
 ```sh
 python3 -m venv /tmp/history-cleaner-release-check
-/tmp/history-cleaner-release-check/bin/python -m pip install dist/git_history_cleaner-1.1.0-py3-none-any.whl
+/tmp/history-cleaner-release-check/bin/python -m pip install dist/git_history_cleaner-1.1.1-py3-none-any.whl
 /tmp/history-cleaner-release-check/bin/git-history-cleaner --version
 /tmp/history-cleaner-release-check/bin/python -m unittest discover -s tests -v
 ```
@@ -63,8 +63,8 @@ and [pending publishers](https://docs.pypi.org/trusted-publishers/creating-a-pro
 ## 3. Tag and test the distribution
 
 After review, mark the changelog release date, commit the release, and create and
-push the `v1.1.0` tag. These are release operations, not performed by the build.
-Run **Publish distribution** manually on tag `v1.1.0`, destination `testpypi`.
+push the `v1.1.1` tag. These are release operations, not performed by the build.
+Run **Publish distribution** manually on tag `v1.1.1`, destination `testpypi`.
 The workflow requires the tag to match the package version and runs tests and
 wheel validation before upload.
 
@@ -72,8 +72,8 @@ Download only this package from TestPyPI, then install its dependencies from PyP
 
 ```sh
 python -m pip download --no-deps --index-url https://test.pypi.org/simple/ \
-  --dest /tmp/history-cleaner-testpypi git-history-cleaner==1.1.0
-python -m pip install /tmp/history-cleaner-testpypi/git_history_cleaner-1.1.0-py3-none-any.whl
+  --dest /tmp/history-cleaner-testpypi git-history-cleaner==1.1.1
+python -m pip install /tmp/history-cleaner-testpypi/git_history_cleaner-1.1.1-py3-none-any.whl
 ```
 
 Use a fresh environment to test the downloaded release. Avoid assuming all
@@ -88,7 +88,7 @@ advance or replace the tag between TestPyPI verification and PyPI publication.
 Then verify an installation from PyPI in a clean environment:
 
 ```sh
-pipx install git-history-cleaner==1.1.0
+pipx install git-history-cleaner==1.1.1
 git-history-cleaner --version
 git-history-cleaner --help
 ```

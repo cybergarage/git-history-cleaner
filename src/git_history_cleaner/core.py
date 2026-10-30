@@ -22,6 +22,22 @@ def git(repo, *args, data=None):
             del env[key]
     env["GIT_NO_REPLACE_OBJECTS"] = "1"
     env["PATH"] = str(Path(sys.executable).parent) + os.pathsep + env.get("PATH", "")
+    if args and args[0] == "push" and "--progress" in args:
+        # Stream transfer diagnostics while retaining them for the run error.
+        # No pack or repository copy is created to measure the upload.
+        with subprocess.Popen(
+            ["git", "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+        ) as proc:
+            output = []
+            while block := proc.stdout.read1(8192):
+                output.append(block)
+                print(block.decode("utf-8", "replace"), end="", file=sys.stderr, flush=True)
+            proc.wait()
+            captured = b"".join(output)
+            if proc.returncode:
+                raise RuntimeError(captured.decode("utf-8", "replace").strip())
+            return captured
     proc = subprocess.run(
         ["git", "-c", "core.hooksPath=/dev/null", "-C", str(repo), *args],
         input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
@@ -319,19 +335,29 @@ def verify(value):
         raise ValueError("run has no completed clean to verify")
     audit = load_audit(root, manifest)
     repo = safe_repo(root, "rewritten")
-    check_result(repo, manifest, audit)
-    if manifest["state"] != "pushed":
-        manifest["state"] = "verified"
-    save(root / "run.json", manifest)
     result = {"run": str(root), "marker": str(root.parent / manifest["operation_marker"]),
               "repository": str(repo), "verified": True, "head_tree_preserved": True,
               "branch": audit["branch"], "old_head": audit["old_head"], "new_head": manifest["new_head"],
               "scope": "selected branch only"}
+    from . import operations
+    reuse_history = False
+    try:
+        reuse_history = (operations.owned_file(root / "verification.json") == result
+                         and operations.metadata_fingerprint(repo) == manifest.get("repo_metadata"))
+    except (OSError, ValueError):
+        pass  # Missing or changed evidence always takes the full verification path.
+    check_result(repo, manifest, audit, reuse_history=reuse_history)
+    if reuse_history:
+        print("Reused verified history inventory: saved report and repository metadata match; "
+              "HEAD, worktree, tree and fsck rechecked", file=sys.stderr, flush=True)
+    if manifest["state"] != "pushed":
+        manifest["state"] = "verified"
+    save(root / "run.json", manifest)
     save(root / "verification.json", result)
     return result
 
 
-def check_result(repo, manifest, audit):
+def check_result(repo, manifest, audit, reuse_history=False):
     if text(repo, "rev-parse", "HEAD") != manifest["new_head"]:
         raise ValueError("rewritten HEAD changed")
     if text(repo, "status", "--porcelain"):
@@ -339,6 +365,8 @@ def check_result(repo, manifest, audit):
     if text(repo, "rev-parse", "HEAD^{tree}") != audit["old_tree"]:
         raise ValueError("verification failed: HEAD tree changed")
     git(repo, "fsck", "--full")
+    if reuse_history:
+        return
     history = inventory(repo, "HEAD")
     all_ids = set().union(*history.values()) if history else set()
     if set(audit["selection"]["strip_blobs"]) & all_ids:
@@ -355,56 +383,105 @@ def confirm(message, yes):
         raise ValueError("not confirmed; use --yes for non-interactive operation")
 
 
-def push(value, remote=None, yes=False, chunk_size=0, destination_origin=None):
+def push(value, remote=None, yes=False, chunk_size=0, destination_origin=None,
+         max_push_bytes=1536 * 1024 * 1024):
+    from . import destinations, uploads
+    if chunk_size < 0 or max_push_bytes <= 0:
+        raise ValueError("push chunk size must be nonnegative and max push bytes positive")
     root, manifest = load_run(value)
     audit = load_audit(root, manifest)
-    if manifest.get("temporary_refs"):
-        raise ValueError("temporary refs from an earlier push remain; resolve them first")
     repo = safe_repo(root, "rewritten")
-    from . import destinations
     destination, selected_by = destinations.resolve(audit, root, remote, destination_origin)
+    pending = list(manifest.get("temporary_refs", []))
+    recorded = dict(manifest.get("temporary_ref_oids", {}))
+    if pending and destination != manifest.get("destination"):
+        raise ValueError("temporary refs belong to another destination; resume that destination first")
     verify(root)
     ref = "refs/heads/" + audit["branch"]
-    advertised = text(repo, "ls-remote", "--refs", destination, ref).split()
-    if not advertised or advertised[0] != audit["old_head"]:
-        raise ValueError("destination branch differs from recorded HEAD; run clean against the current source again")
-    print(f"Push destination ({selected_by}): {json.dumps(destination)}; branch {ref}", file=sys.stderr)
-    confirm(f"Rewrite {destination!r} {ref}?", yes)
-    pending = []
+
+    def remote_oid(name):
+        advertised = text(repo, "ls-remote", "--refs", destination, name).split()
+        return advertised[0] if advertised else None
+
+    tip = remote_oid(ref)
+    if tip not in {audit["old_head"], manifest["new_head"]}:
+        raise ValueError("destination branch differs from recorded old/new HEAD; inspect concurrent changes")
     uploaded = {}
-    manifest.update(destination=destination, temporary_refs=pending)
+    prefix = f"refs/heads/git-history-cleaner-{manifest['run_id']}-"
+    for temporary in pending:
+        oid = recorded.get(temporary)
+        if not temporary.startswith(prefix) or not oid or len(oid) not in {40, 64} or any(c not in "0123456789abcdef" for c in oid):
+            raise ValueError("invalid recorded temporary ref")
+        git(repo, "merge-base", "--is-ancestor", oid, manifest["new_head"])
+        current = remote_oid(temporary)
+        if current is not None and current != oid:
+            raise ValueError("temporary ref changed concurrently; refusing to overwrite or delete it")
+        if current:
+            uploaded[temporary] = oid
+    print(f"Push destination ({selected_by}): {json.dumps(destination)}; branch {ref}", file=sys.stderr)
+    # Plan every checkpoint before any remote write. An oversized single commit
+    # fails here and leaves both history and destination intact.
+    checkpoints = [] if tip == manifest["new_head"] else uploads.checkpoints(
+        repo, chunk_size, max_push_bytes, uploaded.values())
+    print(f"Push plan: {len(checkpoints)} checkpoint(s); max conservative bytes {max_push_bytes}", file=sys.stderr)
+    for oid, bound in checkpoints:
+        print(f"  {oid}: at most approximately {bound} bytes before delta compression", file=sys.stderr)
+    confirm(f"Publish/confirm {destination!r} {ref} and finalize owned temporary refs?", yes)
+    pending = list(uploaded)
+    manifest.update(destination=destination, temporary_refs=pending, temporary_ref_oids=uploaded)
     save(root / "run.json", manifest)
+
+    def publish(oid, target, expected):
+        try:
+            git(repo, "push", "--progress", "--no-follow-tags", "--recurse-submodules=no",
+                f"--force-with-lease={target}:{expected}", destination, f"{oid}:{target}")
+        except RuntimeError as exc:
+            # A lost response does not imply a lost update. Never retry blindly.
+            try:
+                actual = remote_oid(target)
+            except RuntimeError:
+                raise exc
+            if actual != oid:
+                raise
+            print(f"Push response failed, but {target} matches {oid}: {exc}", file=sys.stderr)
+        if remote_oid(target) != oid:
+            raise RuntimeError(f"remote ref {target} does not match uploaded commit {oid}")
+
     try:
-        if chunk_size:
-            commits = text(repo, "rev-list", "--topo-order", "--reverse", "HEAD").splitlines()
-            checkpoints = commits[chunk_size - 1::chunk_size]
-            if commits and (not checkpoints or checkpoints[-1] != commits[-1]):
-                checkpoints.append(commits[-1])
-            for index, oid in enumerate(checkpoints):
-                temporary = f"refs/heads/git-history-cleaner-{manifest['run_id']}-{index}"
-                pending.append(temporary)
-                uploaded[temporary] = oid
-                manifest["temporary_ref_oids"] = uploaded
-                save(root / "run.json", manifest)
-                git(repo, "push", "--no-follow-tags", "--recurse-submodules=no", f"--force-with-lease={temporary}:", destination, f"{oid}:{temporary}")
-        git(repo, "push", "--no-follow-tags", "--recurse-submodules=no", f"--force-with-lease={ref}:{audit['old_head']}",
-            destination, f"{manifest['new_head']}:{ref}")
+        if tip != manifest["new_head"]:
+            if chunk_size or len(checkpoints) > 1 or pending:
+                for oid, bound in checkpoints:
+                    temporary = prefix + oid
+                    pending.append(temporary)
+                    uploaded[temporary] = oid
+                    save(root / "run.json", manifest)
+                    print(f"Uploading checkpoint {oid} (budget {bound} bytes)", file=sys.stderr)
+                    publish(oid, temporary, "")
+            publish(manifest["new_head"], ref, audit["old_head"])
+        elif remote_oid(ref) != manifest["new_head"]:
+            raise RuntimeError("destination branch changed during confirmation")
         manifest["state"] = "pushed"
+        manifest.pop("error", None)
     except Exception as exc:
         manifest.update(state="push-failed", error=str(exc))
+        # Keep checkpoints and their ownership record for the next explicit push.
         raise
     finally:
-        for temporary in pending[:]:
-            try:
-                # Delete only the value we uploaded, never a concurrently changed ref.
-                current = text(repo, "ls-remote", "--refs", destination, temporary).split()
-                if current:
-                    git(repo, "push", "--no-follow-tags", "--recurse-submodules=no", f"--force-with-lease={temporary}:{uploaded[temporary]}", destination, ":" + temporary)
-                pending.remove(temporary)
-            except RuntimeError:
-                pass
+        if manifest["state"] == "pushed":
+            for temporary in pending[:]:
+                try:
+                    current = remote_oid(temporary)
+                    if current and current != uploaded[temporary]:
+                        continue
+                    if current:
+                        git(repo, "push", "--no-follow-tags", "--recurse-submodules=no",
+                            f"--force-with-lease={temporary}:{uploaded[temporary]}", destination, ":" + temporary)
+                    pending.remove(temporary)
+                except RuntimeError:
+                    pass
         save(root / "run.json", manifest)
-    return {"pushed": True, "destination": destination, "temporary_refs_remaining": pending}
+    return {"pushed": True, "destination": destination, "new_head": manifest["new_head"],
+            "temporary_refs_remaining": pending}
 
 
 def cleanup(value=None, yes=False):

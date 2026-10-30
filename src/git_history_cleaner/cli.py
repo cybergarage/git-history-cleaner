@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 
-from . import __version__, core, config, operations
+from . import __version__, core, config, operations, uploads
 
 
 def nonnegative(value):
@@ -35,6 +35,8 @@ def parser():
     push.add_argument("--remote", default=argparse.SUPPRESS, help="destination URL/bare path; default TOML remote, then saved original source")
     push.add_argument("--yes", action="store_true")
     push.add_argument("--push-chunk-size", type=nonnegative, default=0)
+    push.add_argument("--max-push-bytes", type=nonnegative, default=uploads.DEFAULT_MAX_BYTES,
+                      help="conservative bytes per upload (default: 1.5 GiB; must be positive)")
     cleanup = sub.add_parser("cleanup", help="confirm cleanup of all proven operation artifacts in this scope")
     cleanup.add_argument("--run", help="optional expert scope anchor; never bypasses ambiguity")
     cleanup.add_argument("--yes", action="store_true")
@@ -101,7 +103,7 @@ def main(argv=None):
                 elif args.command == "push":
                     _, manifest = core.load_run(root)
                     args = config.resolve(args, context=manifest.get("configuration"))
-                    result = core.push(root, args.remote, args.yes, args.push_chunk_size, args._destination_origin)
+                    result = core.push(root, args.remote, args.yes, args.push_chunk_size, args._destination_origin, args.max_push_bytes)
                 else:
                     args.run = str(root)
                     result = rebase_run(args)

@@ -90,17 +90,27 @@ unselected refs, or that removed data is absent from every other clone.
 
 ## push
 
-`push [--remote DESTINATION] [--yes] [--push-chunk-size N]`
+`push [--remote DESTINATION] [--yes] [--push-chunk-size N] [--max-push-bytes N]`
 
 See [push destination resolution](#push-destination-resolution) below for
 configuration, saved source policy and lease checks.
 
-The default chunk size is 0 (disabled). A positive value preloads checkpoints
-through temporary branches and then deletes them with leases. It handles
-histories shorter than N. Commit-count splitting does not guarantee a maximum
-pack size and may trigger hosting automation or encounter branch policy limits.
-Remaining temporary refs are recorded in `run.json`; resolve those before
-retrying or deleting the run.
+Uploads use a conservative raw-object budget of 1.5 GiB by default. The estimate
+includes object/framing overhead and does not rely on existing pack deltas; it is
+not a measurement of bytes sent on the wire. `--max-push-bytes N` sets a positive
+budget. All checkpoints are planned before upload. A single commit whose new
+reachable objects exceed the budget is rejected without changing history. A
+positive `--push-chunk-size N` adds a commit-count bound; 0 leaves byte planning
+in charge. Temporary branches can trigger hosting automation or branch policy.
+
+Rerun push to resume the same result, including v1.1.0 `push-failed` results.
+Checkpoints are retained on failure and recorded in `run.json`. Resume checks
+recorded refs and their destination, refuses concurrent changes, skips confirmed
+uploads, and removes owned temporary refs with leases after final success.
+If a response is lost, push checks the remote ref before deciding failure. An
+already published rewritten HEAD is recognized without another main-branch push.
+Git progress is included in captured failure diagnostics. No clean/rebase is
+performed by resume.
 
 Non-interactive push requires `--yes`. For machine use, combine `--yes --json`.
 
@@ -114,7 +124,8 @@ URL or local bare path in this order:
 3. Original source push policy saved during clean: for a local source, target
    branch `pushRemote`, then `remote.pushDefault`, then target branch `remote`,
    otherwise its sole configured remote. Use that remote's one pushurl, or its
-   one url if no pushurl exists. For a remote clean source, use its saved URL.
+   one url if no pushurl exists. Original relative remote paths use the original
+   repository directory. For a remote clean source, use its saved URL.
 
 A remote value is a destination, **not** a nickname such as `origin`. Ordinary
 strings are filesystem paths; use HTTP(S), SSH, Git, file URLs, or scp-style Git
@@ -230,9 +241,9 @@ Git history remain unchanged by clean; Git-directory metadata stays untracked.
 
 A crash during metadata initialization can leave incomplete/corrupt ownership
 records. Those require manual inspection, not prefix-based deletion. After a push
-interruption, inspect the destination before any retry: it may have updated before
-the local pushed state was recorded. Old markerless results are not discovered or
-adopted automatically; see [migration](migration.md).
+interruption, rerun `push`: it checks the destination against the rewritten HEAD,
+recognizes an already published result, and resumes recorded checkpoints.
+Old markerless results are not discovered or adopted automatically; see [migration](migration.md).
 
 ## Command settings and output
 
@@ -251,3 +262,9 @@ the unique operation automatically. You can inspect the printed repository with
 
 The CLI can also be invoked as `git history-cleaner` when its executable is on PATH.
 
+On repeated verification, an identical owned verification report and matching
+repository metadata fingerprint allow reuse of the historical inventory. The
+fingerprint covers object file identity, size, nanosecond modification/change
+times, and non-index Git metadata contents. HEAD, worktree, current tree and
+`git fsck --full` are always rechecked. Missing/changed evidence takes the full
+historical scan; this also works with intact v1.1.0 results.

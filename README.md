@@ -1,6 +1,6 @@
 # git-history-cleaner
 
-[![Version 1.1.0](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/cybergarage/git-history-cleaner/blob/main/pyproject.toml)
+[![Version 1.1.1](https://img.shields.io/badge/version-1.1.1-blue.svg)](https://github.com/cybergarage/git-history-cleaner/blob/main/pyproject.toml)
 [![CI](https://github.com/cybergarage/git-history-cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/cybergarage/git-history-cleaner/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://github.com/cybergarage/git-history-cleaner/blob/main/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -16,10 +16,10 @@ publishing; other branches, tags and old clones may retain the original history.
 ## Installation
 
 Requires Python 3.10+, Git 2.36+, macOS or Linux, and enough disk space for an
-isolated full-history clone. Native Windows is not supported in 1.1.0.
+isolated full-history clone. Native Windows is not supported in 1.1.1.
 
 ```sh
-pipx install git-history-cleaner==1.1.0
+pipx install git-history-cleaner==1.1.1
 git-history-cleaner --version
 ```
 
@@ -126,7 +126,7 @@ workflows do not require `--run` or a saved plan.
 - [CLI reference](docs/cli.md): options, selection examples, push destinations and operation discovery
 - [Safety, limitations and recovery](docs/safety.md): preservation, existing clones, rollback and cleanup
 - [Breaking migration notes](docs/migration.md): upgrading from 1.0.0
-- [Building and publishing 1.1.0](docs/releasing.md)
+- [Building and publishing 1.1.1](docs/releasing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
 

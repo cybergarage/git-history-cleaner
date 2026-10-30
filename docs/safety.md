@@ -76,12 +76,20 @@ or markerless result is adopted.
 A changed destination tip is rejected by the old-OID lease. Do not replace it
 with an unconditional force push. Inspect the current branch and run clean again against the intended source.
 
-Preload mode records temporary refs and their expected object IDs. A failed
-cleanup leaves those records. Compare remote IDs with the recorded values and
-delete only matching temporary refs using explicit leases. After an interruption,
-first inspect the destination branch: a push may have succeeded before its state
-was recorded. Preserve the run and resolve that situation manually; do not blindly
-rerun or edit `run.json` to bypass validation.
+Uploads are planned against a conservative 1.5 GiB raw-object budget; this is
+an estimate, not an exact measurement of the network pack. Oversized individual
+commits fail before upload. Progress is streamed and captured in failure errors.
+
+Checkpoint refs and their expected IDs remain recorded on failure. Rerun `push`
+against the same destination to resume: confirmed checkpoints are reused, missing
+ones can be uploaded, and concurrently changed refs are refused. Final main-branch
+publication still uses the original old-OID lease. Temporary refs are deleted with
+leases only after publication succeeds; failed deletions remain recorded.
+
+A lost response is checked against the destination ref. If the branch already
+matches the verified rewritten HEAD, push records success without republishing
+main. Preserve the run; do not edit `run.json` to bypass validation. Rebase and
+local artifact cleanup remain separate explicit commands.
 
 ## Roll back a published branch
 
@@ -183,3 +191,9 @@ fails. Review the resolved destination shown before confirmation. Every path
 retains the recorded branch, old-tip check and explicit lease. Default rebase
 fetches the successfully recorded destination and checks its exact new tip.
 
+On repeated verification, an identical owned verification report and matching
+repository metadata fingerprint allow reuse of the historical inventory. The
+fingerprint covers object file identity, size, nanosecond modification/change
+times, and non-index Git metadata contents. HEAD, worktree, current tree and
+`git fsck --full` are always rechecked. Missing/changed evidence takes the full
+historical scan; this also works with intact v1.1.0 results.
