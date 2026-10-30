@@ -36,9 +36,9 @@ cleanup deletes all proven operations in the invocation scope after confirmation
 analyze nor a chain of maintenance commands is required to finish clean.
 
 Configuration stays flat and declarative, with explicit CLI values taking
-precedence. No action or command sections are accepted. See the
-[complete README workflow](../README.md#complete-workflow) for lease-protected
-publication, fresh-clone migration, controlled rebase and artifact cleanup.
+precedence. No action or command sections are accepted. See the [complete README workflow](../README.md#complete-workflow) for the basic
+sequence, and [existing clones](safety.md#existing-clones) for fresh-clone
+migration, controlled rebase and artifact cleanup.
 
 ## Run-free operations
 
@@ -49,7 +49,7 @@ Clean refuses existing operation markers or leftover results. Verify/push/rebase
 require exactly one valid operation; cleanup validates and confirms removal of
 all proven operations. Nothing selects a newest run. Optional expert `--run`
 anchors a recognized result's scope and never bypasses ambiguity; cleanup remains
-scope-wide. See [marker discovery/recovery](../README.md#operation-markers-and-recovery).
+scope-wide. See [marker discovery/recovery](cli.md#discovery-and-expert-selection).
 
 ## Optional push destination
 
@@ -59,4 +59,5 @@ then clean's saved original push policy supplies inference. Previously created
 results without that snapshot need CLI/config remote. Push rereads its recorded
 config context; a removed previously loaded file fails until explicitly replaced
 or disabled with --no-config. Default rebase now follows the actual recorded push
-destination, rather than assuming origin. See the README resolution rules.
+destination, rather than assuming origin. See [push destination resolution](cli.md#push-destination-resolution).
+
