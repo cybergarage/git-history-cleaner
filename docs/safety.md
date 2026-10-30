@@ -23,6 +23,27 @@ their signatures during filtering; tags on the remote continue pointing to old
 history. Historical source builds may no longer be reproducible. Coordinate the
 rewrite with collaborators and branch-protection administrators before pushing.
 
+## What is preserved
+
+- Every blob used anywhere in the selected branch's current tree, regardless of
+  filename extension or selected directory, is protected from blob stripping.
+- Blobs used by any unselected historical path are protected from global
+  stripping. This conservative policy may retain some old selected versions.
+- Selected historical paths absent from the current tree are removed when all
+  their recorded blob versions meet the size threshold. Their content can remain
+  at other paths.
+- Verification requires the complete HEAD tree ID to remain identical, checks
+  selected removals throughout branch history, and runs `git fsck --full`.
+- Other remote branches and tags are not changed. They may retain old objects.
+
+Historical commits can lose files; empty commits and merge topology are retained.
+Commit IDs and signatures can change. This is history rewriting, not ordinary
+`git gc`. It is not a complete secret-erasure tool.
+
+`selected_blob_bytes` is a sum of uncompressed blob sizes selected for global
+stripping, not an estimate of pack-file or server storage savings. It excludes
+additional effects of removing historical paths.
+
 ## Clean run records
 
 An operation marker reserves a result in its invocation scope. It contains only
@@ -80,12 +101,57 @@ Do not use `push --mirror`: that would affect unrelated branches and tags.
 
 ## Existing clones
 
-Prefer a fresh clone. For local commits based on the pre-rewrite tip, the `rebase`
-command fetches the new tip, checks its identity and preserves a backup branch.
-For conflicts, inspect the working tree and use `git rebase --continue` or
-`git rebase --abort`. The retained backup keeps old objects reachable until you
-explicitly remove it after checking the migrated work. Avoid merging old history
-back into the rewritten branch, which can reintroduce removed objects.
+**A normal `git pull` is not a safe migration after a history rewrite.** It may
+fail or merge the old ancestry back into the cleaned branch, reintroducing removed
+history. First preserve your uncommitted, untracked and unpushed work yourself.
+Do not delete an existing clone before checking that all your work is accounted for.
+
+The simplest migration is a fresh clone into a new directory:
+
+```sh
+git clone git@github.com:example/project.git project-fresh
+cd project-fresh
+git log --oneline -10
+```
+
+For controlled migration of commits based on the recorded old tip, publish with
+the tool's push, then remain in the operation scope and run:
+
+```sh
+# Migrate the current source clone (configuration targets this local clone)
+git-history-cleaner rebase
+# Or, from the same operation scope, migrate another existing clone
+git-history-cleaner rebase --no-config --repo /path/to/existing-clone --remote origin
+```
+
+`--no-config` is not required for the current-clone example. It is used in the
+other-clone example to ignore settings that may target a different repository or
+branch. See [rebase configuration](configuration.md#rebase-configuration).
+Do not cleanup first: rebase requires the operation's recorded push state.
+
+The clone must have a clean working tree and contain the old tip. Its remote tip
+must still equal the cleaned new tip. Rebase retains a recovery branch and replays
+local commits (zero commits also works). For conflicts use `git rebase --continue`
+or `git rebase --abort`. Divergence or later remote commits require inspection.
+The recovery branch retains old objects; remove it yourself only after checking
+the migrated work. Never merge it back into the cleaned branch.
+
+After publication and migration, clean all associated operation artifacts:
+
+```sh
+git-history-cleaner cleanup
+# Explicitly confirmed unattended cleanup
+git-history-cleaner cleanup --yes
+```
+
+Cleanup summarizes all proven artifacts and asks for confirmation. It never
+removes the source or recovery branches in existing clones. Do not put personal
+files or new commits in the isolated result; cleanup refuses detected changes,
+including additional object/reflog recovery data, untracked and ignored files.
+Keep your original work yourself if rollback is needed. You may remove a disposable
+source clone yourself after checking that your work is preserved; the cleaner
+never deletes it. Inside a Git working tree, marker and result artifacts live in
+its private Git directory and are removed by cleanup.
 
 ## Cleanup ownership and user work
 
@@ -116,3 +182,4 @@ remote. Config context is retained and reread deliberately; missing prior config
 fails. Review the resolved destination shown before confirmation. Every path
 retains the recorded branch, old-tip check and explicit lease. Default rebase
 fetches the successfully recorded destination and checks its exact new tip.
+
