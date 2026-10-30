@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "git-history-cleaner"
-version = "1.1.0"
+version = "1.1.1"
 description = "Remove obsolete file history while preserving the current Git tree"
 readme = "README.md"
 requires-python = ">=3.10"

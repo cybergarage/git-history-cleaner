@@ -1,6 +1,6 @@
 # git-history-cleaner
 
-[![Version 1.1.0](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/cybergarage/git-history-cleaner/blob/main/pyproject.toml)
+[![Version 1.1.1](https://img.shields.io/badge/version-1.1.1-blue.svg)](https://github.com/cybergarage/git-history-cleaner/blob/main/pyproject.toml)
 [![CI](https://github.com/cybergarage/git-history-cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/cybergarage/git-history-cleaner/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://github.com/cybergarage/git-history-cleaner/blob/main/pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -18,13 +18,13 @@ see [migration](docs/migration.md) before upgrading from 1.0.0.
 ## Requirements and installation
 
 - Python 3.10 or later and Git 2.36 or later on PATH.
-- macOS or Linux. Native Windows is not supported in 1.1.0.
+- macOS or Linux. Native Windows is not supported in 1.1.1.
 - Enough free disk space for an isolated full-history working clone.
 
 Install from [PyPI](https://pypi.org/project/git-history-cleaner/) with:
 
 ```sh
-pipx install git-history-cleaner==1.1.0
+pipx install git-history-cleaner==1.1.1
 git-history-cleaner --version
 ```
 
@@ -178,8 +178,10 @@ Git history remain unchanged by clean; Git-directory metadata stays untracked.
 
 A crash during metadata initialization can leave incomplete/corrupt ownership
 records. Those require manual inspection, not prefix-based deletion. After a push
-interruption, inspect the destination before any retry: it may have updated before
-the local pushed state was recorded. Old markerless results are not discovered or
+interruption, rerun `push`: it checks the remote against the rewritten HEAD,
+recognizes an already published result, and resumes recorded checkpoints.
+Uploads are split using a conservative 1.5 GiB raw-object budget by default.
+A single commit exceeding the budget is rejected before any upload. Old markerless results are not discovered or
 adopted automatically; see [migration](docs/migration.md).
 
 ## Shared configuration
@@ -238,7 +240,7 @@ Configuration never authorizes a push or deletion.
 | `analyze [selection options]` | Informational stdout preview; no operation artifacts |
 | `clean [selection options]` | Reserve an operation, select, isolated rewrite and verify |
 | `verify` | Recheck the unique operation |
-| `push [--remote URL_OR_PATH] [--yes] [--push-chunk-size N]` | Resolve destination, confirm and publish with a lease |
+| `push [--remote URL_OR_PATH] [--yes] [--push-chunk-size N] [--max-push-bytes N]` | Resolve destination, confirm and publish with a lease |
 | `rebase [--repo EXISTING_CLONE] [--remote NAME_OR_URL] [--branch NAME]` | Safely migrate commits after a tool-recorded push |
 | `cleanup [--yes]` | Confirmed cleanup of all proven operations in the scope |
 
@@ -353,7 +355,7 @@ its private Git directory and are removed by cleanup.
 - [CLI reference](docs/cli.md)
 - [Safety, limitations and recovery](docs/safety.md)
 - [Breaking migration notes](docs/migration.md)
-- [Building and publishing 1.1.0](docs/releasing.md)
+- [Building and publishing 1.1.1](docs/releasing.md)
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md)
 

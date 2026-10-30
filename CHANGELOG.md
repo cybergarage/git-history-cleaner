@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.1 — 2026-10-31
+
+- Bound checkpoint uploads with a conservative raw-object byte budget (default 1.5 GiB).
+  Plan all checkpoints before publication; reject oversized individual commits without rewriting.
+- Resume existing v1.1.0 clean results and interrupted checkpoint uploads. Keep the
+  expected-old-SHA lease and refuse changed checkpoints or destinations.
+- Reconcile lost push responses against remote refs, recognize already published
+  rewritten HEADs, and capture Git transfer progress in failure diagnostics.
+- Retain checkpoint refs on failure; remove owned refs with leases after success.
+
 ## 1.1.0 — 2026-10-29
 
 - Make push --remote optional: CLI > flat TOML remote > original source policy.

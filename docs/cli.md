@@ -55,7 +55,7 @@ unselected refs, or that removed data is absent from every other clone.
 
 ## push
 
-`push [--remote DESTINATION] [--yes] [--push-chunk-size N]`
+`push [--remote DESTINATION] [--yes] [--push-chunk-size N] [--max-push-bytes N]`
 
 DESTINATION is a concrete URL or local bare path, never a nickname. Resolution is
 explicit CLI > flat TOML remote > original source push policy captured by clean.
@@ -74,12 +74,22 @@ are shown on stderr before confirmation. The destination tip must match old_head
 and only the recorded branch is sent with an explicit expected-old-SHA lease.
 Mirror/refspec/followTags/submodule settings do not broaden the push.
 
-The default chunk size is 0 (disabled). A positive value preloads checkpoints
-through temporary branches and then deletes them with leases. It handles
-histories shorter than N. Commit-count splitting does not guarantee a maximum
-pack size and may trigger hosting automation or encounter branch policy limits.
-Remaining temporary refs are recorded in `run.json`; resolve those before
-retrying or deleting the run.
+Uploads use a conservative raw-object budget of 1.5 GiB by default. The estimate
+includes object/framing overhead and does not rely on existing pack deltas; it is
+not a measurement of bytes sent on the wire. `--max-push-bytes N` sets a positive
+budget. All checkpoints are planned before upload. A single commit whose new
+reachable objects exceed the budget is rejected without changing history. A
+positive `--push-chunk-size N` adds a commit-count bound; 0 leaves byte planning
+in charge. Temporary branches can trigger hosting automation or branch policy.
+
+Rerun push to resume the same result, including v1.1.0 `push-failed` results.
+Checkpoints are retained on failure and recorded in `run.json`. Resume checks
+recorded refs and their destination, refuses concurrent changes, skips confirmed
+uploads, and removes owned temporary refs with leases after final success.
+If a response is lost, push checks the remote ref before deciding failure. An
+already published rewritten HEAD is recognized without another main-branch push.
+Git progress is included in captured failure diagnostics. No clean/rebase is
+performed by resume.
 
 Non-interactive push requires `--yes`. For machine use, combine `--yes --json`.
 
